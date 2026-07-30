@@ -1,3 +1,9 @@
 spring:
-  application:
-    name: ledger-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ledger
+    username: postgres
+    password: devpassword123
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
