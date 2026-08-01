@@ -13,7 +13,8 @@ public interface AccountRepository extends JpaRepository<Account, Long>{
     //  itself at startup, parses it word by word (find By AccountNumber), 
     // and automatically generates the correct SQL behind the scenes
     Optional<Account> findByAccountNumber(String accountNumber);
+        
+    }
 
 
-    
-}
+
