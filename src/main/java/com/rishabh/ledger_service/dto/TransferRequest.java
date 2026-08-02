@@ -2,6 +2,10 @@ package com.rishabh.ledger_service.dto;
 
 import java.math.BigDecimal;
 
+// I need this class to help make a transfer request, and see what accounts 
+// involved, how much money.
+// this is shape of "request to move money"
+// this is an instruction, not a record in the database, so separate
 public class TransferRequest {
     private Long fromAccountId;
     private Long toAccountId;
