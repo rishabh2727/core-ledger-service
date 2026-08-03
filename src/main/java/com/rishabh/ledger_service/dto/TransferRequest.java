@@ -6,11 +6,15 @@ import java.math.BigDecimal;
 // involved, how much money.
 // this is shape of "request to move money"
 // this is an instruction, not a record in the database, so separate
+// exists only for the one moment a request comes in. 
+// Once your method finishes, it's gone from memory.
+//  It has no memory of past requests.
 public class TransferRequest {
     private Long fromAccountId;
     private Long toAccountId;
     private BigDecimal amount;
     private String description;
+    private String idempotencyKey;
 
     // Getters and setters
     public Long getFromAccountId() { return fromAccountId; }
@@ -24,4 +28,8 @@ public class TransferRequest {
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
+
+    public String getIdempotencyKey(){return idempotencyKey;}
+    
+
 }

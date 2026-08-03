@@ -3,11 +3,14 @@ package com.rishabh.ledger_service.model;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
+// this table is to assign a key to every transaction, so every transaction stays 
+// unique, we have only 3 fields, id, transcationid and time it was created.
 @Entity
 @Table(name = "idempotency_keys")
 public class IdempotencyKey {
 
     @Id
+    @Column(unique = true, nullable = false)
     private String key; // the client-provided unique key itself is the primary key
 
     @Column(nullable = false)

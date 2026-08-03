@@ -12,19 +12,24 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import com.rishabh.ledger_service.model.Account;
+import com.rishabh.ledger_service.model.IdempotencyKey;
 import com.rishabh.ledger_service.dto.TransferRequest;
 import com.rishabh.ledger_service.model.LedgerEntry;
 import com.rishabh.ledger_service.repository.LedgerEntryRepository;
 import com.rishabh.ledger_service.repository.AccountRepository;
+import com.rishabh.ledger_service.repository.IdempotencyKeyRepository;
 @RestController
 @RequestMapping("/transfers")
 public class TransferController {
     private final LedgerEntryRepository ledgerEntryRepository;
     private final AccountRepository accountRepository;
+    private final IdempotencyKeyRepository idempotencyKeyRepository;
 
-    public TransferController(LedgerEntryRepository ledgerEntryRepository,AccountRepository accountRepository){
+    public TransferController(LedgerEntryRepository ledgerEntryRepository,AccountRepository accountRepository,
+            IdempotencyKeyRepository idempotencyKeyRepository){
         this.ledgerEntryRepository = ledgerEntryRepository;
         this.accountRepository = accountRepository;
+        this.idempotencyKeyRepository = idempotencyKeyRepository;
     }
 
     // How much money does this one account currently have?
@@ -72,6 +77,7 @@ public class TransferController {
     
         Optional<Account> fromAccount1 = accountRepository.findById(fromId);
         Optional<Account> toAccount2 = accountRepository.findById(toId);
+        Optional<IdempotencyKey> idempotencyKey = idempotencyKeyRepository.findById()
 
         if (fromAccount1.isEmpty() ||  toAccount2.isEmpty()){
             return ResponseEntity.badRequest().body("One or Both Accounts do not exist");
