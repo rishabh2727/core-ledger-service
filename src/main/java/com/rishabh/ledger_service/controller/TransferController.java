@@ -73,11 +73,18 @@ public class TransferController {
         
         Long fromId = request.getFromAccountId();
         Long toId = request.getToAccountId();
+        String idemKey = request.getIdempotencyKey();
         // the methods like .findByAccountId belong to repository
     
         Optional<Account> fromAccount1 = accountRepository.findById(fromId);
         Optional<Account> toAccount2 = accountRepository.findById(toId);
-        Optional<IdempotencyKey> idempotencyKey = idempotencyKeyRepository.findById()
+        Optional<IdempotencyKey> idempotencyKey = idempotencyKeyRepository.findById(idemKey);
+        
+        // check if idemKey exists in the idempotencyKey table in database, if yes,
+        // this is a duplicate transfer with same id, and it should not go through
+        if (idempotencyKey.isPresent()){
+            return ResponseEntity.ok("Transfer already processed. Transaction ID: " + idempotencyKey.get().getTransactionId());
+        }
 
         if (fromAccount1.isEmpty() ||  toAccount2.isEmpty()){
             return ResponseEntity.badRequest().body("One or Both Accounts do not exist");
@@ -103,6 +110,11 @@ public class TransferController {
         credit.setType(LedgerEntry.TransactionType.CREDIT);
         credit.setAmount(request.getAmount());
         ledgerEntryRepository.save(credit);
+
+        IdempotencyKey usedKey = new IdempotencyKey();
+        usedKey.setKey(idemKey);
+        usedKey.setTransactionId(transactionId);
+        idempotencyKeyRepository.save(usedKey);
 
         return ResponseEntity.ok("Transfer completed. Transaction ID: " + transactionId);
 
