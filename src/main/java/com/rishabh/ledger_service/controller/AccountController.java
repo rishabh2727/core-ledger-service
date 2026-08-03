@@ -77,6 +77,16 @@ public class AccountController{
         }
         return ResponseEntity.ok(balance);
     }
+
+    @GetMapping("/{id}/transactions")
+    public ResponseEntity<List<LedgerEntry>> getTransactions(@PathVariable Long id) {
+        if (!accountRepository.existsById(id)) {
+            return ResponseEntity.notFound().build();
+        }
+
+        List<LedgerEntry> entries = ledgerEntryRepository.findByAccountId(id);
+        return ResponseEntity.ok(entries);
+    }
     
 }
 
