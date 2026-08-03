@@ -1,12 +1,17 @@
 package com.rishabh.ledger_service.controller;
 
+import java.math.BigDecimal;
+import java.util.List;
+
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import com.rishabh.ledger_service.model.Account;
+import com.rishabh.ledger_service.model.LedgerEntry;
 import org.springframework.http.ResponseEntity;
 import com.rishabh.ledger_service.repository.AccountRepository;
+import com.rishabh.ledger_service.repository.LedgerEntryRepository;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 // import org.springframework.web.bind.annotation.RequestParam;
@@ -26,13 +31,17 @@ public class AccountController{
     // do its job, so we make a constructor here
     // we declare a field here of type AccountRepository
     private final AccountRepository accountRepository;
+    private final LedgerEntryRepository ledgerEntryRepository;
 
     // this is the constructor, two different things with the same 
     // name.
-    public AccountController(AccountRepository accountRepository){
+    public AccountController(
+            AccountRepository accountRepository,
+            LedgerEntryRepository ledgerEntryRepository) {
         // take whatever was passed in as the parameter,
         //  and store it into this object's permanent field
         this.accountRepository = accountRepository;
+        this.ledgerEntryRepository = ledgerEntryRepository;
     }
 
 
@@ -49,6 +58,24 @@ public class AccountController{
         return accountRepository.findById(id)
         .map(ResponseEntity::ok)
         .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/{id}/balance")
+    public ResponseEntity<BigDecimal> getBalance(@PathVariable Long id) {
+        if (!accountRepository.existsById(id)) {
+            return ResponseEntity.notFound().build();
+        }
+
+        List<LedgerEntry> entries = ledgerEntryRepository.findByAccountId(id);
+        BigDecimal balance = BigDecimal.ZERO;
+        for (LedgerEntry entry : entries) {
+            if (entry.getType() == LedgerEntry.TransactionType.CREDIT) {
+                balance = balance.add(entry.getAmount());
+            } else {
+                balance = balance.subtract(entry.getAmount());
+            }
+        }
+        return ResponseEntity.ok(balance);
     }
     
 }

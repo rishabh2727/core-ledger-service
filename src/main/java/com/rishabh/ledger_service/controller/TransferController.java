@@ -16,8 +16,6 @@ import com.rishabh.ledger_service.dto.TransferRequest;
 import com.rishabh.ledger_service.model.LedgerEntry;
 import com.rishabh.ledger_service.repository.LedgerEntryRepository;
 import com.rishabh.ledger_service.repository.AccountRepository;
-
-
 @RestController
 @RequestMapping("/transfers")
 public class TransferController {
@@ -33,18 +31,19 @@ public class TransferController {
     // balance = (sum of all CREDIT amounts for this account) −
     //  (sum of all DEBIT amounts for this account)
     private BigDecimal calculateBalance(Long accountId) {
-    List<LedgerEntry> entries = ledgerEntryRepository.findByAccountId(accountId);
+        List<LedgerEntry> entries = ledgerEntryRepository.findByAccountId(accountId);
+        BigDecimal balance = BigDecimal.ZERO;
 
-    BigDecimal balance = BigDecimal.ZERO;
-    for (LedgerEntry entry : entries) {
-        if (entry.getType() == LedgerEntry.TransactionType.CREDIT) {
-            balance = balance.add(entry.getAmount());
-        } else {
-            balance = balance.subtract(entry.getAmount());
+        for (LedgerEntry entry : entries) {
+            if (entry.getType() == LedgerEntry.TransactionType.CREDIT) {
+                balance = balance.add(entry.getAmount());
+            } else {
+                balance = balance.subtract(entry.getAmount());
+            }
         }
+        return balance;
     }
-    return balance;
-}
+
 // make transfer endpoint, which would send a post request, 
 // always use dependency injection to declare and inject the repositroy
 // as a field on the controller via the constructor, so it can be used as 
