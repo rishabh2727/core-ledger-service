@@ -12,3 +12,5 @@ spring:
 # logging:
 #   level:
 #     org.springframework.web: DEBUG
+
+# tell where kafka is running.
