@@ -13,7 +13,7 @@ public class TransferCompletedEvent {
 // we need an empty constructor so kafka can rebuild this object later
     public TransferCompletedEvent(){}
 
-    public TransferCompletedEvent(Long transactionId, Long toAccountId, Long fromAccountId,BigDecimal amount){
+    public TransferCompletedEvent(Long transactionId, Long fromAccountId,Long toAccountId,BigDecimal amount){
         this.transactionId = transactionId;
         this.toAccountId = toAccountId;
         this.fromAccountId = fromAccountId;

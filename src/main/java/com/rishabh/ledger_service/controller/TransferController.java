@@ -18,18 +18,22 @@ import com.rishabh.ledger_service.model.LedgerEntry;
 import com.rishabh.ledger_service.repository.LedgerEntryRepository;
 import com.rishabh.ledger_service.repository.AccountRepository;
 import com.rishabh.ledger_service.repository.IdempotencyKeyRepository;
+import org.springframework.kafka.core.KafkaTemplate;
+import com.rishabh.ledger_service.event.TransferCompletedEvent;
 @RestController
 @RequestMapping("/transfers")
 public class TransferController {
     private final LedgerEntryRepository ledgerEntryRepository;
     private final AccountRepository accountRepository;
     private final IdempotencyKeyRepository idempotencyKeyRepository;
+    private final KafkaTemplate<String,Object> kafkaTemplate;
 
     public TransferController(LedgerEntryRepository ledgerEntryRepository,AccountRepository accountRepository,
-            IdempotencyKeyRepository idempotencyKeyRepository){
+            IdempotencyKeyRepository idempotencyKeyRepository,KafkaTemplate<String,Object> kafkaTemplate ){
         this.ledgerEntryRepository = ledgerEntryRepository;
         this.accountRepository = accountRepository;
         this.idempotencyKeyRepository = idempotencyKeyRepository;
+        this.kafkaTemplate = kafkaTemplate;
     }
 
     // How much money does this one account currently have?
@@ -115,6 +119,10 @@ public class TransferController {
         usedKey.setKey(idemKey);
         usedKey.setTransactionId(transactionId);
         idempotencyKeyRepository.save(usedKey);
+    
+        // Publishing the event now that the transfer has genuinely succeeded
+        TransferCompletedEvent event = new TransferCompletedEvent(transactionId, fromId, toId, request.getAmount());
+        kafkaTemplate.send("transfer-events", event);
 
         return ResponseEntity.ok("Transfer completed. Transaction ID: " + transactionId);
 
