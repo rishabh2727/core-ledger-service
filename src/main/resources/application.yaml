@@ -1,3 +1,19 @@
 spring:
-  application:
-    name: fraud-service
+  datasource:
+    url: jdbc:postgresql://localhost:5433/fraud
+    username: postgres
+    password: devpassword
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: fraud-service-group
+      auto-offset-reset: earliest
+
+server:
+  port: 8081
+  # Ledger Service runs on port 8080
+# they can't both use 8080
