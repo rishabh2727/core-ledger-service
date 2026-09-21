@@ -1,20 +1,17 @@
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5433/fraud
-    username: postgres
-    password: devpassword
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/fraud}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:devpassword}
   jpa:
     hibernate:
       ddl-auto: update
     show-sql: true
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
-      group-id: fraud-service-group
-      # this decides what happens the first time this consumer group ever connects
+      group-id: ${KAFKA_CONSUMER_GROUP_ID:fraud-service-group}
       auto-offset-reset: earliest
 
 server:
-  port: 8081
-  # Ledger Service runs on port 8080
-# they can't both use 8080
+  port: ${SERVER_PORT:8081}
