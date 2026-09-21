@@ -1,0 +1,3 @@
+Database-per-service is a core idea: Ledger cannot SELECT from Fraud’s tables. They only share Kafka.
+infra compose.yaml is one file that starts all the services.and their repective databases.
+
