@@ -21,12 +21,15 @@ import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
 public class KafkaConsumerConfig {
     private final String bootstrapServers;
     private final String groupId;
+    private final boolean listenerAutoStartup;
 
     public KafkaConsumerConfig(
             @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers,
-            @Value("${spring.kafka.consumer.group-id}") String groupId) {
+            @Value("${spring.kafka.consumer.group-id}") String groupId,
+            @Value("${spring.kafka.listener.auto-startup:true}") boolean listenerAutoStartup) {
         this.bootstrapServers = bootstrapServers;
         this.groupId = groupId;
+        this.listenerAutoStartup = listenerAutoStartup;
     }
 
     // working with beans and factories,
@@ -39,16 +42,23 @@ public class KafkaConsumerConfig {
         config.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
         config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JacksonJsonDeserializer.class);
-        config.put(JacksonJsonDeserializer.TRUSTED_PACKAGES, "*");
+        // for trusted packages, only trust our own package.
+        config.put(JacksonJsonDeserializer.TRUSTED_PACKAGES, "com.rishabh.fraud_service");
+        // we set the header to be false, so that we ignore ledger's class name, because 
+        // if fraud trusts that header, it tries to load Ledger's class, it fails and 
+        // the message is dropped.
+        config.put(JacksonJsonDeserializer.USE_TYPE_INFO_HEADERS, false);
+        config.put(JacksonJsonDeserializer.VALUE_DEFAULT_TYPE, TransferCompletedEvent.class.getName());
         return new DefaultKafkaConsumerFactory<>(config);
     }
-    
-    // this is the object that actually manages running your @KafkaListener method
+
+    // Spring looks for a bean named kafkaListenerContainerFactory by default.
     @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, Object> concurrentKafkaListenerContainerFactory(){
+    public ConcurrentKafkaListenerContainerFactory<String, Object> kafkaListenerContainerFactory() {
         ConcurrentKafkaListenerContainerFactory<String, Object> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory());
+        factory.setAutoStartup(listenerAutoStartup);
         return factory;
     }
 }

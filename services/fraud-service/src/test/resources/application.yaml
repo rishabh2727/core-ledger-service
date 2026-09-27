@@ -13,3 +13,5 @@ spring:
     consumer:
       group-id: fraud-service-test
       auto-offset-reset: earliest
+    listener:
+      auto-startup: false
