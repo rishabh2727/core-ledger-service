@@ -1,6 +1,7 @@
 FROM maven:3.9.11-eclipse-temurin-21 AS build
 WORKDIR /workspace
 
+# copy is to put the files from my laptop into the image.
 COPY pom.xml .
 COPY services/ledger-service/pom.xml services/ledger-service/pom.xml
 COPY services/fraud-service/pom.xml services/fraud-service/pom.xml

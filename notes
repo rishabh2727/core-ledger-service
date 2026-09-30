@@ -2,3 +2,46 @@ Database-per-service is a core idea: Ledger cannot SELECT from Fraud’s tables.
 infra compose.yaml is one file that starts all the services.and their repective databases.
 
 Inside Docker, containers reach each other by service name, not localhost.
+
+How to test
+From the monorepo root (Downloads/ledger-service). Rebuild so the new listener is in the Fraud image:
+
+docker compose -f infra/compose.yaml up --build
+Wait until ledger-service and fraud-service look healthy.
+
+1. Create two accounts (Basic auth: rishabh / password123):
+
+curl -u rishabh:password123 -X POST http://localhost:8080/accounts \
+  -H "Content-Type: application/json" \
+  -d '{"accountNumber": "1001", "accountType": "CHECKING"}'
+curl -u rishabh:password123 -X POST http://localhost:8080/accounts \
+  -H "Content-Type: application/json" \
+  -d '{"accountNumber": "1002", "accountType": "CHECKING"}'
+2. Seed money. New accounts have $0, so a transfer will fail until you add a credit (API docs: no “deposit from nowhere” endpoint):
+
+docker compose -f infra/compose.yaml exec ledger-db \
+  psql -U postgres -d ledger \
+  -c "INSERT INTO ledger_entries (account_id, transaction_id, type, amount, posted_at)
+      VALUES (1, 1, 'CREDIT', 500.00, NOW());"
+Use the real account id from step 1 if it is not 1.
+
+3. Transfer (new idempotencyKey every time):
+
+curl -u rishabh:password123 -X POST http://localhost:8080/transfers \
+  -H "Content-Type: application/json" \
+  -d '{"fromAccountId": 1, "toAccountId": 2, "amount": 50.00, "idempotencyKey": "test-key-1"}'
+You want: Transfer completed. Transaction ID: ...
+
+4. Check Fraud
+
+Logs:
+
+docker compose -f infra/compose.yaml logs fraud-service
+Look for: Received transfer event: ...
+
+Database (table name has a space and a typo):
+
+docker compose -f infra/compose.yaml exec fraud-db \
+  psql -U postgres -d fraud \
+  -c 'SELECT * FROM "flagged tansactions";'
+You want a row with that transaction_id, account_id = sender, reason = received.
