@@ -25,6 +25,10 @@ public class FlaggedTransaction {
     @Column(nullable = false)
     private String reason;
 
+    private Integer score;
+
+    private String outcome;
+
     @Column(nullable = false)
     private LocalDateTime flaggedAt = LocalDateTime.now();
 
@@ -42,6 +46,12 @@ public class FlaggedTransaction {
 
     public String getReason() { return reason; }
     public void setReason(String reason) { this.reason = reason; }
+
+    public Integer getScore() { return score; }
+    public void setScore(Integer score) { this.score = score; }
+
+    public String getOutcome() { return outcome; }
+    public void setOutcome(String outcome) { this.outcome = outcome; }
 
     public LocalDateTime getFlaggedAt() { return flaggedAt; }
     public void setFlaggedAt(LocalDateTime flaggedAt) { this.flaggedAt = flaggedAt; }
