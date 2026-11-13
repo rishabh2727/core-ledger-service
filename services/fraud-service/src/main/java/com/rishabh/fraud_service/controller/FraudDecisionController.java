@@ -9,27 +9,27 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.rishabh.fraud_service.model.FlaggedTransaction;
-import com.rishabh.fraud_service.repository.FlaggedTransactionRepository;
+import com.rishabh.fraud_service.model.FraudDecision;
+import com.rishabh.fraud_service.repository.FraudDecisionRepository;
 
 @RestController
 @RequestMapping("/fraud-decisions")
 public class FraudDecisionController {
 
-    private final FlaggedTransactionRepository flaggedTransactionRepository;
+    private final FraudDecisionRepository fraudDecisionRepository;
 
-    public FraudDecisionController(FlaggedTransactionRepository flaggedTransactionRepository) {
-        this.flaggedTransactionRepository = flaggedTransactionRepository;
+    public FraudDecisionController(FraudDecisionRepository fraudDecisionRepository) {
+        this.fraudDecisionRepository = fraudDecisionRepository;
     }
 
     @GetMapping
-    public Page<FlaggedTransaction> listDecisions(@PageableDefault(size = 20) Pageable pageable) {
-        return flaggedTransactionRepository.findAll(pageable);
+    public Page<FraudDecision> listDecisions(@PageableDefault(size = 20) Pageable pageable) {
+        return fraudDecisionRepository.findAll(pageable);
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<FlaggedTransaction> getDecision(@PathVariable Long id) {
-        return flaggedTransactionRepository.findById(id)
+    public ResponseEntity<FraudDecision> getDecision(@PathVariable Long id) {
+        return fraudDecisionRepository.findById(id)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }

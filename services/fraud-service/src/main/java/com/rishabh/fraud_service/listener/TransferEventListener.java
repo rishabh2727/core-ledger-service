@@ -9,8 +9,8 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 import com.rishabh.fraud_service.event.TransferCompletedEvent;
-import com.rishabh.fraud_service.model.FlaggedTransaction;
-import com.rishabh.fraud_service.repository.FlaggedTransactionRepository;
+import com.rishabh.fraud_service.model.FraudDecision;
+import com.rishabh.fraud_service.repository.FraudDecisionRepository;
 import com.rishabh.fraud_service.rule.FraudRule;
 
 
@@ -21,13 +21,13 @@ import com.rishabh.fraud_service.rule.FraudRule;
 public class TransferEventListener {
 
     private static final Logger log = LoggerFactory.getLogger(TransferEventListener.class);
-    private final FlaggedTransactionRepository flaggedTransactionRepository;
+    private final FraudDecisionRepository fraudDecisionRepository;
     private final List<FraudRule> fraudRules;
 
     // make the constructor to inject the repo.
-    public TransferEventListener(FlaggedTransactionRepository flaggedTransactionRepository,
+    public TransferEventListener(FraudDecisionRepository fraudDecisionRepository,
                                  List<FraudRule> fraudRules) {
-        this.flaggedTransactionRepository = flaggedTransactionRepository;
+        this.fraudDecisionRepository = fraudDecisionRepository;
         this.fraudRules = fraudRules;
 
     }
@@ -51,7 +51,7 @@ public class TransferEventListener {
         String outcome = totalScore >= 50 ? "DECLINE" : "APPROVE";
         String reason = reasons.isEmpty() ? "NO_RULE_TRIGGERED" : String.join(",", reasons);
 
-        FlaggedTransaction row = new FlaggedTransaction();
+        FraudDecision row = new FraudDecision();
         row.setTransactionId(event.getTransactionId());
         row.setAccountId(event.getFromAccountId());
         row.setAmount(event.getAmount());
@@ -60,7 +60,7 @@ public class TransferEventListener {
         row.setOutcome(outcome);
         
         // now insert this object as a row, call save on repo.
-        flaggedTransactionRepository.save(row);
+        fraudDecisionRepository.save(row);
 
         log.info("Fraud decision for transfer {}: outcome={}, score={}, reason={}",
                 event.getTransactionId(), outcome, totalScore, reason);

@@ -3,11 +3,16 @@ package com.rishabh.fraud_service.model;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 
 @Entity
-@Table(name = "flagged tansactions")
-public class FlaggedTransaction {
+@Table(name = "fraud_decisions")
+public class FraudDecision {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -55,9 +60,4 @@ public class FlaggedTransaction {
 
     public LocalDateTime getFlaggedAt() { return flaggedAt; }
     public void setFlaggedAt(LocalDateTime flaggedAt) { this.flaggedAt = flaggedAt; }
-
-
-
-
-    
 }
