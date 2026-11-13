@@ -22,14 +22,17 @@ import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
 public class KafkaConsumerConfig {
     private final String bootstrapServers;
     private final String groupId;
+    private final String autoOffsetReset;
     private final boolean listenerAutoStartup;
 
     public KafkaConsumerConfig(
             @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers,
             @Value("${spring.kafka.consumer.group-id}") String groupId,
+            @Value("${spring.kafka.consumer.auto-offset-reset:latest}") String autoOffsetReset,
             @Value("${spring.kafka.listener.auto-startup:true}") boolean listenerAutoStartup) {
         this.bootstrapServers = bootstrapServers;
         this.groupId = groupId;
+        this.autoOffsetReset = autoOffsetReset;
         this.listenerAutoStartup = listenerAutoStartup;
     }
 
@@ -41,6 +44,7 @@ public class KafkaConsumerConfig {
         Map<String, Object> config = new HashMap<>();
         config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         config.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+        config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, autoOffsetReset);
         config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JacksonJsonDeserializer.class);
         // for trusted packages, only trust our own package.
