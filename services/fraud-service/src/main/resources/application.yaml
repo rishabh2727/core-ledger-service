@@ -12,6 +12,10 @@ spring:
     consumer:
       group-id: ${KAFKA_CONSUMER_GROUP_ID:fraud-service-group}
       auto-offset-reset: earliest
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
 
 server:
   port: ${SERVER_PORT:8081}

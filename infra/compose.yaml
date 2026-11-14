@@ -113,12 +113,16 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       KAFKA_CONSUMER_GROUP_ID: fraud-service-group
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     ports:
       - "8081:8081"
     depends_on:
       fraud-db:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
 volumes:

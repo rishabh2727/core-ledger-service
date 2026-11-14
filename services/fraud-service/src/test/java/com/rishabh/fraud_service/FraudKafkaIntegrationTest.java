@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -16,8 +17,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.KafkaContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -48,8 +51,17 @@ class FraudKafkaIntegrationTest {
     static KafkaContainer kafka = new KafkaContainer(
             DockerImageName.parse("confluentinc/cp-kafka:7.6.1"));
 
+    // This is a real Redis server running in Docker for the velocity rule.
+    @Container
+    static GenericContainer<?> redis = new GenericContainer<>(
+            DockerImageName.parse("redis:7.4-alpine"))
+            .withExposedPorts(6379);
+
     @Autowired
     private FraudDecisionRepository fraudDecisionRepository;
+
+    @Autowired
+    private StringRedisTemplate redisTemplate;
 
     @DynamicPropertySource
     static void configureContainers(DynamicPropertyRegistry registry) {
@@ -61,11 +73,17 @@ class FraudKafkaIntegrationTest {
         registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
         registry.add("spring.kafka.consumer.group-id", () -> "fraud-integration-test");
         registry.add("spring.kafka.consumer.auto-offset-reset", () -> "earliest");
+        registry.add("spring.data.redis.host", redis::getHost);
+        registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
     }
 
     @BeforeEach
     void deleteExistingDecisions() {
         fraudDecisionRepository.deleteAll();
+        Set<String> velocityKeys = redisTemplate.keys("fraud_velocity:*");
+        if (velocityKeys != null && !velocityKeys.isEmpty()) {
+            redisTemplate.delete(velocityKeys);
+        }
     }
 
     @Test
@@ -88,6 +106,31 @@ class FraudKafkaIntegrationTest {
             assertEquals("DECLINE", decision.getOutcome());
             assertEquals("LARGE_AMOUNT,ROUND_AMOUNT", decision.getReason());
         });
+    }
+
+    @Test
+    void addsVelocityScoreWhenSameAccountTransfersTooQuickly() throws Exception {
+        sendTransferEvent(20001L, "10.00");
+        sendTransferEvent(20002L, "10.00");
+        sendTransferEvent(20003L, "10.00");
+
+        await().atMost(10, SECONDS).untilAsserted(() -> {
+            List<FraudDecision> decisions = fraudDecisionRepository.findAll();
+
+            assertEquals(3, decisions.size());
+
+            FraudDecision thirdDecision = decisionForTransaction(decisions, 20003L);
+            assertEquals(50, thirdDecision.getScore());
+            assertEquals("DECLINE", thirdDecision.getOutcome());
+            assertEquals("HIGH_VELOCITY", thirdDecision.getReason());
+        });
+    }
+
+    private FraudDecision decisionForTransaction(List<FraudDecision> decisions, long transactionId) {
+        return decisions.stream()
+                .filter(decision -> decision.getTransactionId().equals(transactionId))
+                .findFirst()
+                .orElseThrow();
     }
 
     private void sendTransferEvent(long transactionId, String amount) throws Exception {
