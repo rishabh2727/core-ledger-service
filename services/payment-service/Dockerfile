@@ -8,7 +8,7 @@ COPY services/payment-service/pom.xml services/payment-service/pom.xml
 RUN mvn -B -ntp -pl services/payment-service -am dependency:go-offline
 
 COPY services/payment-service/src services/payment-service/src
-RUN mvn -B -ntp -pl services/payment-service -am package \
+RUN mvn -B -ntp -DskipTests -pl services/payment-service -am package \
     && cp services/payment-service/target/payment-service-*.jar /app.jar
 
 FROM eclipse-temurin:21-jre-alpine

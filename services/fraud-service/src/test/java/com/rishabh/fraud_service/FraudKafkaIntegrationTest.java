@@ -110,19 +110,21 @@ class FraudKafkaIntegrationTest {
 
     @Test
     void addsVelocityScoreWhenSameAccountTransfersTooQuickly() throws Exception {
+        // Rule: more than 3 transfers in 5 minutes -> HIGH_VELOCITY.
         sendTransferEvent(20001L, "10.00");
         sendTransferEvent(20002L, "10.00");
         sendTransferEvent(20003L, "10.00");
+        sendTransferEvent(20004L, "10.00");
 
         await().atMost(10, SECONDS).untilAsserted(() -> {
             List<FraudDecision> decisions = fraudDecisionRepository.findAll();
 
-            assertEquals(3, decisions.size());
+            assertEquals(4, decisions.size());
 
-            FraudDecision thirdDecision = decisionForTransaction(decisions, 20003L);
-            assertEquals(50, thirdDecision.getScore());
-            assertEquals("DECLINE", thirdDecision.getOutcome());
-            assertEquals("HIGH_VELOCITY", thirdDecision.getReason());
+            FraudDecision fourthDecision = decisionForTransaction(decisions, 20004L);
+            assertEquals(50, fourthDecision.getScore());
+            assertEquals("DECLINE", fourthDecision.getOutcome());
+            assertEquals("HIGH_VELOCITY", fourthDecision.getReason());
         });
     }
 

@@ -8,7 +8,8 @@ import com.rishabh.fraud_service.service.TransactionVelocityTracker;
 @Component
 public class VelocityRule implements FraudRule {
 
-    private static final long MAX_TRANSFERS_IN_WINDOW = 3;
+    // Flag when count is greater than 3 inside the 5-minute window.
+    private static final long MAX_ALLOWED_TRANSFERS = 3;
     private static final int VELOCITY_SCORE = 50;
 
     private final TransactionVelocityTracker velocityTracker;
@@ -23,7 +24,7 @@ public class VelocityRule implements FraudRule {
                 event.getFromAccountId(),
                 event.getTransactionId());
 
-        if (recentTransferCount >= MAX_TRANSFERS_IN_WINDOW) {
+        if (recentTransferCount > MAX_ALLOWED_TRANSFERS) {
             return VELOCITY_SCORE;
         }
 

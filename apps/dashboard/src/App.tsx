@@ -26,12 +26,13 @@ type PaymentApi = {
   fraudScore?: number
   fraudReason?: string
   ledgerTransactionId?: number
+  failureReason?: string
 }
 
 type DashboardTransaction = {
   transactionId: number
   amount: string
-  status: 'APPROVED' | 'DECLINED' | 'PENDING'
+  status: 'APPROVED' | 'DECLINED' | 'PENDING' | 'FAILED'
   score?: number
   reason?: string
   source: 'sample' | 'backend'
@@ -49,6 +50,18 @@ type DepositFormState = {
 }
 
 type ApiStatus = 'unknown' | 'online' | 'offline'
+
+type Toast = {
+  kind: 'success' | 'error' | 'info'
+  title: string
+  message: string
+}
+
+type PaymentResult = {
+  payment: PaymentApi
+  title: string
+  message: string
+}
 
 type BackendFlowStep = {
   title: string
@@ -145,8 +158,8 @@ const learningCards = [
   {
     eyebrow: 'Redis velocity',
     title: 'Why is Redis here?',
-    body: 'Redis remembers recent transfers per account. If one account sends too many transfers quickly, the velocity rule adds risk points.',
-    flow: 'account id -> Redis sorted set -> recent count',
+    body: 'Redis remembers recent transfers per account. If one account makes more than 3 transfers within 5 minutes, the velocity rule adds risk points.',
+    flow: 'account id -> Redis sorted set -> count over 5 minutes',
     accent: 'from-violet-300/30 to-indigo-500/10',
   },
 ]
@@ -176,7 +189,7 @@ const backendFlowSteps: BackendFlowStep[] = [
   },
   {
     title: 'VelocityRule checks Redis',
-    detail: 'Fraud checks Redis to count recent transfers for this account.',
+    detail: 'Fraud checks Redis. More than 3 transfers in 5 minutes adds 50 risk points.',
     points: '+0 or +50',
   },
   {
@@ -224,17 +237,21 @@ function App() {
   const [flowStep, setFlowStep] = useState(-1)
   const flowTimer = useRef<number | undefined>(undefined)
   const [form, setForm] = useState<TransferFormState>(() => ({
-    fromAccountId: '1',
-    toAccountId: '2',
-    amount: '2000.00',
+    fromAccountId: '5',
+    toAccountId: '6',
+    amount: '50.00',
   }))
   const [depositForm, setDepositForm] = useState<DepositFormState>({
-    accountId: '1',
+    accountId: '5',
     amount: '5000.00',
   })
   const [ledgerStatus, setLedgerStatus] = useState<ApiStatus>('unknown')
   const [fraudStatus, setFraudStatus] = useState<ApiStatus>('unknown')
   const [paymentStatus, setPaymentStatus] = useState<ApiStatus>('unknown')
+  const [balances, setBalances] = useState<Record<string, string>>({})
+  const [toast, setToast] = useState<Toast | null>(null)
+  const [paymentResult, setPaymentResult] = useState<PaymentResult | null>(null)
+  const [insufficientFundsMessage, setInsufficientFundsMessage] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState('Start your backend, then submit a transfer to watch the flow.')
 
   const selectedTransaction = useMemo(
@@ -250,24 +267,75 @@ function App() {
     }
   }, [])
 
-  function playBackendTimeline() {
+  function stopBackendTimeline() {
     if (flowTimer.current) {
       window.clearInterval(flowTimer.current)
+      flowTimer.current = undefined
     }
+  }
 
+  function playBackendTimeline() {
+    stopBackendTimeline()
     setFlowStep(0)
+    // While waiting for the real Payment API response, slowly advance through
+    // the early steps so the UI does not look frozen.
     flowTimer.current = window.setInterval(() => {
       setFlowStep((current) => {
-        if (current >= backendFlowSteps.length - 1) {
-          if (flowTimer.current) {
-            window.clearInterval(flowTimer.current)
-          }
+        // Do not pretend Ledger/Kafka finished before the API answers.
+        if (current >= 8) {
           return current
         }
-
         return current + 1
       })
-    }, 750)
+    }, 450)
+  }
+
+  function finalizeBackendTimeline(payment: PaymentApi) {
+    stopBackendTimeline()
+
+    if (payment.status === 'DECLINED') {
+      setFlowStep(8)
+      return
+    }
+
+    if (payment.status === 'FAILED') {
+      setFlowStep(10)
+      return
+    }
+
+    setFlowStep(backendFlowSteps.length - 1)
+  }
+
+  function showToast(nextToast: Toast) {
+    setToast(nextToast)
+    window.setTimeout(() => setToast(null), 4200)
+  }
+
+  async function refreshBalance(accountId: string) {
+    if (!accountId) {
+      return
+    }
+
+    const response = await fetch(`/api/ledger/accounts/${accountId}/balance`, {
+      headers: {
+        Authorization: basicAuthHeader(),
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`Could not load balance for account ${accountId}.`)
+    }
+
+    const balance = await response.text()
+    setBalances((current) => ({ ...current, [accountId]: balance }))
+  }
+
+  async function refreshVisibleBalances() {
+    await Promise.all([
+      refreshBalance(depositForm.accountId),
+      refreshBalance(form.fromAccountId),
+      refreshBalance(form.toAccountId),
+    ])
   }
 
   async function refreshFraudDecisions() {
@@ -297,6 +365,7 @@ function App() {
   useEffect(() => {
     const firstPoll = window.setTimeout(() => {
       refreshFraudDecisions().catch(() => setFraudStatus('offline'))
+      refreshVisibleBalances().catch(() => undefined)
     }, 0)
 
     const timer = window.setInterval(() => {
@@ -337,11 +406,52 @@ function App() {
       setPaymentStatus('online')
       setLedgerStatus(payment.status === 'COMPLETED' ? 'online' : ledgerStatus)
       setFraudStatus('online')
+      finalizeBackendTimeline(payment)
 
       const transaction = toDashboardTransactionFromPayment(payment)
       setSelectedId(transaction.transactionId)
-      setTransactions((current) => [transaction, ...current])
-      setStatusMessage(`Payment ${payment.id} finished with status ${payment.status}.`)
+      setTransactions((current) => [transaction, ...current.filter((row) => row.source !== 'sample')])
+      setStatusMessage(`Payment ${payment.id} finished with status ${payment.status}. Score: ${payment.fraudScore ?? 0}.`)
+      await refreshVisibleBalances().catch(() => undefined)
+
+      if (payment.status === 'COMPLETED') {
+        setPaymentResult({
+          payment,
+          title: 'APPROVED',
+          message: `Fraud score ${payment.fraudScore ?? 0}. Ledger moved $${formatAmount(String(payment.amount))}.`,
+        })
+        showToast({
+          kind: 'success',
+          title: 'Payment completed',
+          message: `Approved with score ${payment.fraudScore ?? 0}.`,
+        })
+      } else if (payment.status === 'DECLINED') {
+        setPaymentResult({
+          payment,
+          title: 'DECLINED',
+          message: `Fraud score ${payment.fraudScore ?? 0}: ${payment.fraudReason ?? 'No reason returned'}.`,
+        })
+        showToast({
+          kind: 'error',
+          title: 'Payment declined',
+          message: `Fraud score ${payment.fraudScore ?? 0}: ${payment.fraudReason ?? 'No reason returned'}.`,
+        })
+      } else if (payment.status === 'FAILED') {
+        const failure = payment.failureReason ?? 'Payment could not be completed.'
+        if (failure.toLowerCase().includes('insufficient funds')) {
+          setInsufficientFundsMessage(failure)
+        }
+        setPaymentResult({
+          payment,
+          title: 'FAILED',
+          message: failure,
+        })
+        showToast({
+          kind: 'error',
+          title: 'Payment failed',
+          message: failure,
+        })
+      }
 
       window.setTimeout(() => {
         refreshFraudDecisions().catch(() => undefined)
@@ -349,6 +459,11 @@ function App() {
     } catch (error) {
       setPaymentStatus('offline')
       setStatusMessage(error instanceof Error ? error.message : 'Could not submit transfer.')
+      showToast({
+        kind: 'error',
+        title: 'Payment request failed',
+        message: error instanceof Error ? error.message : 'Payment Service did not accept the request.',
+      })
     }
   }
 
@@ -375,15 +490,40 @@ function App() {
 
       setLedgerStatus('online')
       setStatusMessage(message)
+      await refreshBalance(depositForm.accountId)
+      showToast({
+        kind: 'success',
+        title: 'Funds added',
+        message: `$${formatAmount(depositForm.amount)} was added to account ${depositForm.accountId}.`,
+      })
     } catch (error) {
       setLedgerStatus('offline')
       setStatusMessage(error instanceof Error ? error.message : 'Could not add money to account.')
+      showToast({
+        kind: 'error',
+        title: 'Could not add funds',
+        message: error instanceof Error ? error.message : 'Ledger rejected the deposit.',
+      })
     }
   }
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(217,70,239,0.18),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(251,191,36,0.12),_transparent_25%),#020617] text-slate-100">
       <section className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-8">
+        {toast && <ToastPopup toast={toast} />}
+        {paymentResult && (
+          <PaymentResultOverlay
+            result={paymentResult}
+            onClose={() => setPaymentResult(null)}
+          />
+        )}
+        {insufficientFundsMessage && (
+          <InsufficientFundsDialog
+            message={insufficientFundsMessage}
+            onClose={() => setInsufficientFundsMessage(null)}
+          />
+        )}
+
         <header className="flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-white/[0.03] p-6 shadow-2xl shadow-fuchsia-950/20 backdrop-blur lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-amber-200">
@@ -404,6 +544,7 @@ function App() {
         <div className="grid gap-6 xl:grid-cols-[1.5fr_0.9fr]">
           <SystemMap animationRun={animationRun} />
           <div className="space-y-6">
+            <BalanceOverview balances={balances} fromAccountId={form.fromAccountId} toAccountId={form.toAccountId} />
             <DepositForm form={depositForm} onChange={setDepositForm} onSubmit={submitDeposit} />
             <TransferForm form={form} onChange={setForm} onSubmit={submitTransfer} statusMessage={statusMessage} />
           </div>
@@ -501,16 +642,25 @@ function BackendProgressTimeline({ currentStep }: { currentStep: number }) {
               )}
 
               <div className="relative flex gap-4">
-                <div
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-sm font-black ${
-                    isComplete
-                      ? 'border-emerald-300 bg-emerald-300 text-slate-950'
-                      : isActive
-                        ? 'border-amber-200 bg-amber-200 text-slate-950'
-                        : 'border-slate-700 bg-slate-900 text-slate-500'
-                  }`}
-                >
-                  {isComplete ? '✓' : index + 1}
+                <div className="relative h-10 w-10 shrink-0">
+                  {isActive && (
+                    <motion.div
+                      className="absolute inset-[-5px] rounded-full border-2 border-dashed border-amber-200/80"
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1.1, repeat: Infinity, ease: 'linear' }}
+                    />
+                  )}
+                  <div
+                    className={`relative flex h-10 w-10 items-center justify-center rounded-full border text-sm font-black ${
+                      isComplete
+                        ? 'border-emerald-300 bg-emerald-300 text-slate-950'
+                        : isActive
+                          ? 'border-amber-200 bg-amber-200 text-slate-950'
+                          : 'border-slate-700 bg-slate-900 text-slate-500'
+                    }`}
+                  >
+                    {isComplete ? '✓' : index + 1}
+                  </div>
                 </div>
 
                 <div className="min-w-0">
@@ -590,6 +740,204 @@ function SystemMap({ animationRun }: { animationRun: number }) {
         </div>
       </div>
     </section>
+  )
+}
+
+function PaymentResultOverlay({
+  result,
+  onClose,
+}: {
+  result: PaymentResult
+  onClose: () => void
+}) {
+  const approved = result.payment.status === 'COMPLETED' || result.payment.status === 'APPROVED'
+  const declined = result.payment.status === 'DECLINED'
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-6 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.85, y: 24 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="w-full max-w-md rounded-[2rem] border border-white/10 bg-slate-900 p-8 shadow-2xl"
+      >
+        <div className="flex justify-center">
+          <motion.div
+            initial={{ scale: 0.4, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: 'spring', stiffness: 220, damping: 14 }}
+            className={`relative flex h-28 w-28 items-center justify-center rounded-full border-4 ${
+              approved
+                ? 'border-emerald-300 bg-emerald-300/15'
+                : declined
+                  ? 'border-rose-300 bg-rose-300/15'
+                  : 'border-amber-300 bg-amber-300/15'
+            }`}
+          >
+            <svg viewBox="0 0 52 52" className="h-16 w-16">
+              {approved ? (
+                <motion.path
+                  d="M14 27 L22 35 L38 17"
+                  fill="transparent"
+                  stroke="#6ee7b7"
+                  strokeWidth="5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  initial={{ pathLength: 0 }}
+                  animate={{ pathLength: 1 }}
+                  transition={{ duration: 0.7, ease: 'easeOut' }}
+                />
+              ) : (
+                <>
+                  <motion.path
+                    d="M18 18 L34 34"
+                    fill="transparent"
+                    stroke={declined ? '#fda4af' : '#fcd34d'}
+                    strokeWidth="5"
+                    strokeLinecap="round"
+                    initial={{ pathLength: 0 }}
+                    animate={{ pathLength: 1 }}
+                    transition={{ duration: 0.45 }}
+                  />
+                  <motion.path
+                    d="M34 18 L18 34"
+                    fill="transparent"
+                    stroke={declined ? '#fda4af' : '#fcd34d'}
+                    strokeWidth="5"
+                    strokeLinecap="round"
+                    initial={{ pathLength: 0 }}
+                    animate={{ pathLength: 1 }}
+                    transition={{ duration: 0.45, delay: 0.1 }}
+                  />
+                </>
+              )}
+            </svg>
+          </motion.div>
+        </div>
+
+        <h3 className="mt-6 text-center text-3xl font-black text-white">{result.title}</h3>
+        <p className="mt-3 text-center text-sm text-slate-300">{result.message}</p>
+
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <div className="rounded-2xl bg-slate-950 p-4 text-center">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Score</p>
+            <p className="mt-2 text-2xl font-black text-cyan-200">{result.payment.fraudScore ?? 0}</p>
+          </div>
+          <div className="rounded-2xl bg-slate-950 p-4 text-center">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Payment</p>
+            <p className="mt-2 text-2xl font-black text-white">#{result.payment.id}</p>
+          </div>
+        </div>
+
+        <p className="mt-4 rounded-2xl bg-slate-950 px-4 py-3 text-sm text-slate-300">
+          Reason: {result.payment.fraudReason ?? result.payment.failureReason ?? 'N/A'}
+        </p>
+
+        <button
+          onClick={onClose}
+          className={`mt-6 w-full rounded-2xl px-4 py-3 font-semibold text-slate-950 ${
+            approved ? 'bg-emerald-300' : declined ? 'bg-rose-300' : 'bg-amber-300'
+          }`}
+        >
+          Continue
+        </button>
+      </motion.div>
+    </div>
+  )
+}
+
+function InsufficientFundsDialog({
+  message,
+  onClose,
+}: {
+  message: string
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/75 p-6 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, y: 20, scale: 0.95 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        className="w-full max-w-md rounded-[2rem] border border-amber-300/30 bg-slate-900 p-7 shadow-2xl"
+      >
+        <p className="text-sm font-semibold uppercase tracking-[0.25em] text-amber-200">Ledger blocked the transfer</p>
+        <h3 className="mt-3 text-3xl font-black text-white">Insufficient funds</h3>
+        <p className="mt-3 text-sm leading-6 text-slate-300">
+          Fraud may have approved this payment, but Ledger refused to move money because the sender account did not have enough balance.
+        </p>
+        <p className="mt-4 rounded-2xl bg-slate-950 px-4 py-3 text-sm text-amber-100">{message}</p>
+        <button onClick={onClose} className="mt-6 w-full rounded-2xl bg-amber-300 px-4 py-3 font-semibold text-slate-950">
+          Okay, I will add funds
+        </button>
+      </motion.div>
+    </div>
+  )
+}
+
+function ToastPopup({ toast }: { toast: Toast }) {
+  const isSuccess = toast.kind === 'success'
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -24, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -24, scale: 0.95 }}
+      className={`fixed right-6 top-6 z-50 max-w-sm rounded-3xl border p-5 shadow-2xl backdrop-blur ${
+        isSuccess
+          ? 'border-emerald-300/30 bg-emerald-950/90 shadow-emerald-950/40'
+          : 'border-rose-300/30 bg-rose-950/90 shadow-rose-950/40'
+      }`}
+    >
+      <div className="flex gap-4">
+        <motion.div
+          initial={{ scale: 0, rotate: -45 }}
+          animate={{ scale: 1, rotate: 0 }}
+          transition={{ type: 'spring', stiffness: 240, damping: 14 }}
+          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-2xl font-black ${
+            isSuccess ? 'bg-emerald-300 text-slate-950' : 'bg-rose-300 text-slate-950'
+          }`}
+        >
+          {isSuccess ? '✓' : '!'}
+        </motion.div>
+        <div>
+          <p className="font-bold text-white">{toast.title}</p>
+          <p className="mt-1 text-sm text-slate-100">{toast.message}</p>
+        </div>
+      </div>
+    </motion.div>
+  )
+}
+
+function BalanceOverview({
+  balances,
+  fromAccountId,
+  toAccountId,
+}: {
+  balances: Record<string, string>
+  fromAccountId: string
+  toAccountId: string
+}) {
+  return (
+    <section className="rounded-3xl border border-emerald-300/20 bg-gradient-to-br from-emerald-400/15 via-slate-900 to-cyan-400/10 p-6 shadow-2xl shadow-emerald-950/20">
+      <p className="text-sm font-semibold uppercase tracking-[0.25em] text-emerald-200">Account balances</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <BalanceTile label="From account" accountId={fromAccountId} balance={balances[fromAccountId]} />
+        <BalanceTile label="To account" accountId={toAccountId} balance={balances[toAccountId]} />
+      </div>
+      <p className="mt-4 text-xs text-slate-400">
+        Balances refresh after adding funds or submitting a payment.
+      </p>
+    </section>
+  )
+}
+
+function BalanceTile({ label, accountId, balance }: { label: string; accountId: string; balance?: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{label}</p>
+      <p className="mt-2 font-semibold text-white">Account {accountId || '-'}</p>
+      <p className="mt-2 text-2xl font-black text-emerald-200">
+        {balance === undefined ? 'Not loaded' : `$${formatAmount(balance)}`}
+      </p>
+    </div>
   )
 }
 
@@ -690,6 +1038,7 @@ function TransactionFeed({
             <tr>
               <th className="px-4 py-3">Transaction</th>
               <th className="px-4 py-3">Amount</th>
+              <th className="px-4 py-3">Score</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Source</th>
             </tr>
@@ -705,6 +1054,7 @@ function TransactionFeed({
               >
                 <td className="px-4 py-3 font-medium text-white">TXN-{transaction.transactionId}</td>
                 <td className="px-4 py-3 text-slate-300">${formatAmount(transaction.amount)}</td>
+                <td className="px-4 py-3 font-semibold text-cyan-200">{transaction.score ?? '-'}</td>
                 <td className="px-4 py-3">
                   <StatusBadge status={transaction.status} />
                 </td>
@@ -799,6 +1149,7 @@ function StatusBadge({ status }: { status: DashboardTransaction['status'] }) {
     APPROVED: 'bg-emerald-400/10 text-emerald-300',
     DECLINED: 'bg-rose-400/10 text-rose-300',
     PENDING: 'bg-amber-400/10 text-amber-300',
+    FAILED: 'bg-orange-400/10 text-orange-300',
   }
 
   return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${styles[status]}`}>{status}</span>
@@ -821,13 +1172,17 @@ function toDashboardTransactionFromPayment(payment: PaymentApi): DashboardTransa
     amount: String(payment.amount),
     status: toDashboardStatus(payment.status),
     score: payment.fraudScore,
-    reason: payment.fraudReason,
+    reason: payment.fraudReason ?? payment.failureReason ?? payment.status,
     source: 'backend',
   }
 }
 
 function toDashboardStatus(status: PaymentApi['status']): DashboardTransaction['status'] {
-  if (status === 'DECLINED' || status === 'FAILED') {
+  if (status === 'FAILED') {
+    return 'FAILED'
+  }
+
+  if (status === 'DECLINED') {
     return 'DECLINED'
   }
 
@@ -852,12 +1207,20 @@ function formatAmount(amount: string) {
 }
 
 function buildExplanation(reasons: string[]) {
+  if (reasons.some((reason) => reason.toLowerCase().includes('insufficient funds'))) {
+    return 'Ledger rejected the transfer because the sender did not have enough available balance.'
+  }
+
+  if (reasons.includes('FAILED')) {
+    return 'Payment failed while calling one of the backend services. Check the message and service logs.'
+  }
+
   if (reasons.includes('LARGE_AMOUNT') && reasons.includes('ROUND_AMOUNT')) {
     return 'Transaction exceeded the configured amount threshold and matched the round amount rule.'
   }
 
   if (reasons.includes('HIGH_VELOCITY')) {
-    return 'This account made multiple transfers in a short time, so Redis velocity detection raised the risk score.'
+    return 'This account made more than 3 transfers within 5 minutes, so Redis velocity detection raised the risk score.'
   }
 
   if (reasons.includes('LARGE_AMOUNT')) {

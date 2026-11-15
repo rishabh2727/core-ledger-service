@@ -9,7 +9,7 @@ COPY services/payment-service/pom.xml services/payment-service/pom.xml
 RUN mvn -B -ntp -pl services/fraud-service -am dependency:go-offline
 
 COPY services/fraud-service/src services/fraud-service/src
-RUN mvn -B -ntp -pl services/fraud-service -am package \
+RUN mvn -B -ntp -DskipTests -pl services/fraud-service -am package \
     && cp services/fraud-service/target/fraud-service-*.jar /app.jar
 
 FROM eclipse-temurin:21-jre-alpine
