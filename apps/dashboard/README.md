@@ -2,6 +2,9 @@
 
 This React dashboard is a learning layer for the backend system.
 
+Screenshots and a ~1 minute live demo video live in
+[`docs/demo/`](../../docs/demo/) (linked from the root README).
+
 It shows:
 
 - Ledger Service

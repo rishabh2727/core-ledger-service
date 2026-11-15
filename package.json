@@ -1,0 +1,27 @@
+{
+  "name": "ledger-service",
+  "version": "1.0.0",
+  "description": "Monorepo for an event-driven payments platform. The current baseline contains the Ledger and Fraud bounded services, shared local infrastructure, and one Maven reactor build. A Payment orchestrator will be added as a later module.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rishabh2727/core-ledger-service.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/rishabh2727/core-ledger-service/issues"
+  },
+  "homepage": "https://github.com/rishabh2727/core-ledger-service#readme",
+  "devDependencies": {
+    "playwright": "^1.56.1"
+  }
+}
