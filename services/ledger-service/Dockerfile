@@ -4,6 +4,7 @@ WORKDIR /workspace
 COPY pom.xml .
 COPY services/ledger-service/pom.xml services/ledger-service/pom.xml
 COPY services/fraud-service/pom.xml services/fraud-service/pom.xml
+COPY services/payment-service/pom.xml services/payment-service/pom.xml
 RUN mvn -B -ntp -pl services/ledger-service -am dependency:go-offline
 
 COPY services/ledger-service/src services/ledger-service/src

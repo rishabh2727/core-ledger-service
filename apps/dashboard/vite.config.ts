@@ -19,6 +19,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/fraud/, ''),
       },
+      '/api/payment': {
+        target: process.env.VITE_PAYMENT_PROXY_TARGET ?? 'http://localhost:8082',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/payment/, ''),
+      },
     },
   },
 })

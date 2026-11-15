@@ -125,6 +125,28 @@ services:
       redis:
         condition: service_healthy
 
+  payment-service:
+    build:
+      context: ..
+      dockerfile: services/payment-service/Dockerfile
+    environment:
+      DB_URL: jdbc:postgresql://payment-db:5432/payment
+      DB_USERNAME: postgres
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+      FRAUD_SERVICE_BASE_URL: http://fraud-service:8081
+      LEDGER_SERVICE_BASE_URL: http://ledger-service:8080
+      LEDGER_SERVICE_USERNAME: rishabh
+      LEDGER_SERVICE_PASSWORD: password123
+    ports:
+      - "8082:8082"
+    depends_on:
+      payment-db:
+        condition: service_healthy
+      ledger-service:
+        condition: service_started
+      fraud-service:
+        condition: service_started
+
   dashboard:
     build:
       context: ..
@@ -132,6 +154,7 @@ services:
     environment:
       VITE_LEDGER_PROXY_TARGET: http://ledger-service:8080
       VITE_FRAUD_PROXY_TARGET: http://fraud-service:8081
+      VITE_PAYMENT_PROXY_TARGET: http://payment-service:8082
       VITE_LEDGER_USERNAME: rishabh
       VITE_LEDGER_PASSWORD: password123
     ports:
@@ -140,6 +163,8 @@ services:
       ledger-service:
         condition: service_started
       fraud-service:
+        condition: service_started
+      payment-service:
         condition: service_started
 
 volumes:
