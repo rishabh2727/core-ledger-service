@@ -3,13 +3,6 @@
 Event-driven payments monorepo with Ledger, Fraud, Payment orchestration, Kafka,
 Redis, Postgres, and an educational dashboard.
 
-## Live demo
-
-Watch the dashboard end-to-end (~61s): deposits, approved transfers, large-amount
-declines, Redis velocity declines, insufficient funds, and fraud explanations.
-
-- Video (MP4): [docs/demo/dashboard-live-demo.mp4](docs/demo/dashboard-live-demo.mp4)
-- Re-record: `node scripts/record-dashboard-demo.mjs` (requires Playwright + stack running)
 
 ## Dashboard screenshots
 
