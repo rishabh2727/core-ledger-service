@@ -11,7 +11,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
-import org.springframework.kafka.support.serializer.JacksonJsonSerializer;
 
 
 // this is how we configure a Kafka producer in Spring
@@ -28,14 +27,13 @@ public class KafkaProducerConfig {
     // and call methods on, except instead of saving to a database, 
     // it sends messages to a topic.
     // it holds all the low-level connection settings
-    // where Kafka lives, how to convert messages to JSON
+    // where Kafka lives, how to send JSON text
     @Bean
-    public ProducerFactory<String, Object> producerFactory(){
+    public ProducerFactory<String, String> producerFactory(){
         Map<String, Object> config = new HashMap<>();
         config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        // convert my actual message object into JSON before sending
-        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JacksonJsonSerializer.class);
+        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         return new DefaultKafkaProducerFactory<>(config);
     }
 
@@ -46,7 +44,7 @@ public class KafkaProducerConfig {
     //  KafkaTemplate itself doesn't reinvent any of that,
     // it just wraps the factory in a simpler interface for you to use.
     @Bean
-    public KafkaTemplate<String, Object> kafkaTemplate(){
+    public KafkaTemplate<String, String> kafkaTemplate(){
         // we construct a Kafka template object and it needs one thing to
         // do its job, that is Producer Factory, with all the settings,
         // we call producer factory method here defined above

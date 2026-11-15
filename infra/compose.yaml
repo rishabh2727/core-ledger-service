@@ -125,6 +125,23 @@ services:
       redis:
         condition: service_healthy
 
+  dashboard:
+    build:
+      context: ..
+      dockerfile: apps/dashboard/Dockerfile
+    environment:
+      VITE_LEDGER_PROXY_TARGET: http://ledger-service:8080
+      VITE_FRAUD_PROXY_TARGET: http://fraud-service:8081
+      VITE_LEDGER_USERNAME: rishabh
+      VITE_LEDGER_PASSWORD: password123
+    ports:
+      - "5173:5173"
+    depends_on:
+      ledger-service:
+        condition: service_started
+      fraud-service:
+        condition: service_started
+
 volumes:
   ledger-db-data:
   fraud-db-data:

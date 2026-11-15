@@ -11,14 +11,18 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rishabh.ledger_service.model.Account;
 import com.rishabh.ledger_service.model.IdempotencyKey;
 import com.rishabh.ledger_service.dto.TransferRequest;
 import com.rishabh.ledger_service.model.LedgerEntry;
+import com.rishabh.ledger_service.model.OutboxEvent;
 import com.rishabh.ledger_service.repository.LedgerEntryRepository;
 import com.rishabh.ledger_service.repository.AccountRepository;
 import com.rishabh.ledger_service.repository.IdempotencyKeyRepository;
-import org.springframework.kafka.core.KafkaTemplate;
+import com.rishabh.ledger_service.repository.OutboxEventRepository;
 import com.rishabh.ledger_service.event.TransferCompletedEvent;
 @RestController
 @RequestMapping("/transfers")
@@ -26,14 +30,18 @@ public class TransferController {
     private final LedgerEntryRepository ledgerEntryRepository;
     private final AccountRepository accountRepository;
     private final IdempotencyKeyRepository idempotencyKeyRepository;
-    private final KafkaTemplate<String,Object> kafkaTemplate;
+    private final OutboxEventRepository outboxEventRepository;
+    private final ObjectMapper objectMapper;
 
     public TransferController(LedgerEntryRepository ledgerEntryRepository,AccountRepository accountRepository,
-            IdempotencyKeyRepository idempotencyKeyRepository,KafkaTemplate<String,Object> kafkaTemplate ){
+            IdempotencyKeyRepository idempotencyKeyRepository,
+            OutboxEventRepository outboxEventRepository,
+            ObjectMapper objectMapper){
         this.ledgerEntryRepository = ledgerEntryRepository;
         this.accountRepository = accountRepository;
         this.idempotencyKeyRepository = idempotencyKeyRepository;
-        this.kafkaTemplate = kafkaTemplate;
+        this.outboxEventRepository = outboxEventRepository;
+        this.objectMapper = objectMapper;
     }
 
     // How much money does this one account currently have?
@@ -120,12 +128,26 @@ public class TransferController {
         usedKey.setTransactionId(transactionId);
         idempotencyKeyRepository.save(usedKey);
     
-        // Publishing the event now that the transfer has genuinely succeeded
+        // Save the event in the same database transaction as the transfer.
+        // A background publisher will send this row to Kafka after the commit.
         TransferCompletedEvent event = new TransferCompletedEvent(transactionId, fromId, toId, request.getAmount());
-        kafkaTemplate.send("transfer-events", event);
+        OutboxEvent outboxEvent = new OutboxEvent();
+        outboxEvent.setTopic("transfer-events");
+        outboxEvent.setEventKey(String.valueOf(transactionId));
+        outboxEvent.setEventType("TRANSFER_COMPLETED");
+        outboxEvent.setPayload(toJson(event));
+        outboxEventRepository.save(outboxEvent);
 
         return ResponseEntity.ok("Transfer completed. Transaction ID: " + transactionId);
 
+    }
+
+    private String toJson(TransferCompletedEvent event) {
+        try {
+            return objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Could not create transfer event JSON", exception);
+        }
     }
 
 }
