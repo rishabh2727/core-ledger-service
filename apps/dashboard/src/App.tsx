@@ -17,6 +17,17 @@ type FraudDecisionPage = {
   content?: FraudDecision[]
 }
 
+type PaymentApi = {
+  id: number
+  fromAccountId: number
+  toAccountId: number
+  amount: number | string
+  status: 'PENDING' | 'APPROVED' | 'DECLINED' | 'COMPLETED' | 'FAILED'
+  fraudScore?: number
+  fraudReason?: string
+  ledgerTransactionId?: number
+}
+
 type DashboardTransaction = {
   transactionId: number
   amount: string
@@ -30,7 +41,6 @@ type TransferFormState = {
   fromAccountId: string
   toAccountId: string
   amount: string
-  idempotencyKey: string
 }
 
 type DepositFormState = {
@@ -39,6 +49,13 @@ type DepositFormState = {
 }
 
 type ApiStatus = 'unknown' | 'online' | 'offline'
+
+type BackendFlowStep = {
+  title: string
+  detail: string
+  points?: string
+  future?: boolean
+}
 
 const sampleTransactions: DashboardTransaction[] = [
   {
@@ -81,12 +98,12 @@ const ruleLabels: Record<string, string> = {
 }
 
 const serviceCards = [
+  { name: 'Payment Service', detail: 'Creates payment rows and coordinates Fraud + Ledger' },
   { name: 'Ledger Service', detail: 'Creates ledger entries and outbox events' },
   { name: 'Kafka', detail: 'Moves events between services' },
   { name: 'Fraud Service', detail: 'Runs fraud rules and scoring' },
   { name: 'Redis', detail: 'Tracks transaction velocity' },
   { name: 'Fraud DB', detail: 'Stores fraud decisions' },
-  { name: 'Payment Service', detail: 'Coming next: payment lifecycle' },
 ]
 
 const learningCards = [
@@ -100,8 +117,8 @@ const learningCards = [
   {
     eyebrow: 'Transfer flow',
     title: 'What happens when I send money?',
-    body: 'Ledger checks accounts, checks balance, writes DEBIT and CREDIT entries, saves an outbox event, then the outbox publisher sends the Kafka event.',
-    flow: 'Ledger DB -> Outbox -> Kafka -> Fraud',
+    body: 'Payment creates a PENDING row, asks Fraud for a pre-check, and only calls Ledger if Fraud approves.',
+    flow: 'Payment -> Fraud -> Ledger -> completed/declined',
     accent: 'from-cyan-300/30 to-blue-500/10',
   },
   {
@@ -114,8 +131,8 @@ const learningCards = [
   {
     eyebrow: 'Spam clicks',
     title: 'What if I spam send money?',
-    body: 'The idempotency key protects Ledger from processing the same request twice. If the key is reused, Ledger returns the original transaction instead.',
-    flow: 'Same key -> duplicate blocked',
+    body: 'Each payment gets its own row. When Payment calls Ledger, it uses a payment-based idempotency key so Ledger does not process the same payment twice.',
+    flow: 'payment id -> ledger idempotency key',
     accent: 'from-fuchsia-300/30 to-purple-500/10',
   },
   {
@@ -134,42 +151,18 @@ const learningCards = [
   },
 ]
 
-const backendFlowSteps = [
+const backendFlowSteps: BackendFlowStep[] = [
   {
-    title: 'Dashboard sends transfer request',
-    detail: 'The button press sends POST /transfers to Ledger through the Vite proxy with Basic Auth.',
+    title: 'Dashboard sends payment request',
+    detail: 'The button press sends POST /payments to Payment Service through the Vite proxy.',
   },
   {
-    title: 'Ledger validates request',
-    detail: 'Ledger checks that both accounts exist and that the sender has enough balance.',
+    title: 'Payment saves PENDING row',
+    detail: 'Payment Service creates a payment row so the lifecycle is visible in the payment database.',
   },
   {
-    title: 'Ledger saves DEBIT row',
-    detail: 'A DEBIT ledger_entries row is saved for the sender account.',
-  },
-  {
-    title: 'Ledger saves CREDIT row',
-    detail: 'A CREDIT ledger_entries row is saved for the receiver account.',
-  },
-  {
-    title: 'Ledger saves idempotency key',
-    detail: 'The idempotency key is saved so the same request is not processed twice.',
-  },
-  {
-    title: 'Ledger saves outbox event',
-    detail: 'A PENDING outbox_events row is saved in the same database transaction.',
-  },
-  {
-    title: 'Outbox publisher sends Kafka event',
-    detail: 'The background publisher reads the pending outbox row and sends transfer-events to Kafka.',
-  },
-  {
-    title: 'Kafka stores the event',
-    detail: 'Kafka becomes the handoff point between Ledger and Fraud.',
-  },
-  {
-    title: 'Fraud listener receives event',
-    detail: 'Fraud Service consumes the transfer event and starts running fraud rules.',
+    title: 'Payment asks Fraud to check',
+    detail: 'Payment Service sends the account ids and amount to POST /fraud-checks.',
   },
   {
     title: 'LargeAmountRule runs',
@@ -187,21 +180,40 @@ const backendFlowSteps = [
     points: '+0 or +50',
   },
   {
-    title: 'Fraud calculates final score',
-    detail: 'All rule scores are added together. Score >= 50 becomes DECLINE.',
+    title: 'Fraud returns decision',
+    detail: 'Fraud returns APPROVE or DECLINE with score and reason.',
   },
   {
-    title: 'Fraud saves decision row',
-    detail: 'Fraud saves transaction id, amount, score, outcome, and reason in fraud_decisions.',
+    title: 'Payment updates fraud result',
+    detail: 'Payment saves fraud score and reason on the payment row.',
   },
   {
-    title: 'Dashboard reads Fraud API',
-    detail: 'The UI polls GET /fraud-decisions and updates the live transaction feed.',
+    title: 'If declined, Payment stops',
+    detail: 'Payment marks the row DECLINED and does not call Ledger.',
   },
   {
-    title: 'Payment Service decision step',
-    detail: 'Coming next: Payment Service will use the decision to mark payments approved, declined, or completed.',
-    future: true,
+    title: 'If approved, Payment calls Ledger',
+    detail: 'Payment sends POST /transfers to Ledger with a payment-based idempotency key.',
+  },
+  {
+    title: 'Ledger saves DEBIT and CREDIT rows',
+    detail: 'Ledger moves money by writing ledger_entries rows for both accounts.',
+  },
+  {
+    title: 'Ledger saves outbox event',
+    detail: 'Ledger saves a PENDING outbox event in the same database transaction.',
+  },
+  {
+    title: 'Outbox publisher sends Kafka event',
+    detail: 'Ledger publishes transfer-events so the rest of the platform can react.',
+  },
+  {
+    title: 'Payment marks final status',
+    detail: 'Payment stores COMPLETED with the Ledger transaction id, or FAILED if Ledger could not move money.',
+  },
+  {
+    title: 'Dashboard shows the payment result',
+    detail: 'The UI shows the payment status, fraud score, and backend flow.',
   },
 ]
 
@@ -215,7 +227,6 @@ function App() {
     fromAccountId: '1',
     toAccountId: '2',
     amount: '2000.00',
-    idempotencyKey: `demo-${Date.now()}`,
   }))
   const [depositForm, setDepositForm] = useState<DepositFormState>({
     accountId: '1',
@@ -223,6 +234,7 @@ function App() {
   })
   const [ledgerStatus, setLedgerStatus] = useState<ApiStatus>('unknown')
   const [fraudStatus, setFraudStatus] = useState<ApiStatus>('unknown')
+  const [paymentStatus, setPaymentStatus] = useState<ApiStatus>('unknown')
   const [statusMessage, setStatusMessage] = useState('Start your backend, then submit a transfer to watch the flow.')
 
   const selectedTransaction = useMemo(
@@ -304,52 +316,38 @@ function App() {
     setStatusMessage('Transfer submitted. Watch the event move through the system.')
 
     try {
-      const response = await fetch('/api/ledger/transfers', {
+      const response = await fetch('/api/payment/payments', {
         method: 'POST',
         headers: {
-          Authorization: basicAuthHeader(),
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           fromAccountId: Number(form.fromAccountId),
           toAccountId: Number(form.toAccountId),
           amount: form.amount,
-          description: 'Dashboard demo transfer',
-          idempotencyKey: form.idempotencyKey,
         }),
       })
 
-      const message = await response.text()
       if (!response.ok) {
+        const message = await response.text()
         throw new Error(message)
       }
 
-      setLedgerStatus('online')
-      const transactionId = parseTransactionId(message)
-      if (transactionId) {
-        setSelectedId(transactionId)
-        setTransactions((current) => [
-          {
-            transactionId,
-            amount: form.amount,
-            status: 'PENDING',
-            source: 'backend',
-          },
-          ...current,
-        ])
-      }
+      const payment = (await response.json()) as PaymentApi
+      setPaymentStatus('online')
+      setLedgerStatus(payment.status === 'COMPLETED' ? 'online' : ledgerStatus)
+      setFraudStatus('online')
 
-      setForm((current) => ({
-        ...current,
-        idempotencyKey: `demo-${Date.now()}`,
-      }))
-      setStatusMessage('Ledger accepted the transfer. Fraud decision will appear after Kafka delivers the event.')
+      const transaction = toDashboardTransactionFromPayment(payment)
+      setSelectedId(transaction.transactionId)
+      setTransactions((current) => [transaction, ...current])
+      setStatusMessage(`Payment ${payment.id} finished with status ${payment.status}.`)
 
       window.setTimeout(() => {
         refreshFraudDecisions().catch(() => undefined)
       }, 2500)
     } catch (error) {
-      setLedgerStatus('offline')
+      setPaymentStatus('offline')
       setStatusMessage(error instanceof Error ? error.message : 'Could not submit transfer.')
     }
   }
@@ -398,7 +396,7 @@ function App() {
               Submit a transfer, follow the animated event path, then click a transaction to understand the fraud score.
             </p>
           </div>
-          <ServiceStatusCard ledgerStatus={ledgerStatus} fraudStatus={fraudStatus} />
+          <ServiceStatusCard paymentStatus={paymentStatus} ledgerStatus={ledgerStatus} fraudStatus={fraudStatus} />
         </header>
 
         <LearningFlashcards />
@@ -638,20 +636,15 @@ function TransferForm({
     <section className="rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
       <h2 className="text-2xl font-semibold text-white">Try a transfer</h2>
       <p className="mt-2 text-sm text-slate-400">
-        This calls Ledger. The animation shows the backend path while Fraud writes the decision.
+        This calls Payment Service. Payment asks Fraud first, then tells Ledger to move money only if approved.
       </p>
 
       <form className="mt-6 space-y-4" onSubmit={onSubmit}>
         <Input label="From account id" value={form.fromAccountId} onChange={(value) => onChange({ ...form, fromAccountId: value })} />
         <Input label="To account id" value={form.toAccountId} onChange={(value) => onChange({ ...form, toAccountId: value })} />
         <Input label="Amount" value={form.amount} onChange={(value) => onChange({ ...form, amount: value })} />
-        <Input
-          label="Idempotency key"
-          value={form.idempotencyKey}
-          onChange={(value) => onChange({ ...form, idempotencyKey: value })}
-        />
         <button className="w-full rounded-2xl bg-cyan-300 px-4 py-3 font-semibold text-slate-950 transition hover:bg-cyan-200">
-          Submit transfer and animate flow
+          Create payment and animate flow
         </button>
       </form>
 
@@ -770,9 +763,11 @@ function FraudExplanationPanel({ transaction }: { transaction: DashboardTransact
 }
 
 function ServiceStatusCard({
+  paymentStatus,
   ledgerStatus,
   fraudStatus,
 }: {
+  paymentStatus: ApiStatus
   ledgerStatus: ApiStatus
   fraudStatus: ApiStatus
 }) {
@@ -780,6 +775,7 @@ function ServiceStatusCard({
     <div className="rounded-3xl border border-slate-800 bg-slate-900 px-5 py-4">
       <p className="text-sm font-semibold text-white">Backend API status</p>
       <div className="mt-3 flex flex-wrap gap-2">
+        <ApiStatusBadge label="Payment" status={paymentStatus} />
         <ApiStatusBadge label="Ledger" status={ledgerStatus} />
         <ApiStatusBadge label="Fraud" status={fraudStatus} />
       </div>
@@ -819,15 +815,33 @@ function toDashboardTransaction(decision: FraudDecision): DashboardTransaction {
   }
 }
 
+function toDashboardTransactionFromPayment(payment: PaymentApi): DashboardTransaction {
+  return {
+    transactionId: payment.ledgerTransactionId ?? payment.id,
+    amount: String(payment.amount),
+    status: toDashboardStatus(payment.status),
+    score: payment.fraudScore,
+    reason: payment.fraudReason,
+    source: 'backend',
+  }
+}
+
+function toDashboardStatus(status: PaymentApi['status']): DashboardTransaction['status'] {
+  if (status === 'DECLINED' || status === 'FAILED') {
+    return 'DECLINED'
+  }
+
+  if (status === 'COMPLETED' || status === 'APPROVED') {
+    return 'APPROVED'
+  }
+
+  return 'PENDING'
+}
+
 function basicAuthHeader() {
   const username = import.meta.env.VITE_LEDGER_USERNAME ?? 'rishabh'
   const password = import.meta.env.VITE_LEDGER_PASSWORD ?? 'password123'
   return `Basic ${window.btoa(`${username}:${password}`)}`
-}
-
-function parseTransactionId(message: string) {
-  const match = message.match(/Transaction ID:\s*(\d+)/i)
-  return match ? Number(match[1]) : undefined
 }
 
 function formatAmount(amount: string) {
