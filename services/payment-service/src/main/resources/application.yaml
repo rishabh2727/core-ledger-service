@@ -10,3 +10,13 @@ spring:
 
 server:
   port: ${SERVER_PORT:8082}
+
+fraud:
+  service:
+    base-url: ${FRAUD_SERVICE_BASE_URL:http://localhost:8081}
+
+ledger:
+  service:
+    base-url: ${LEDGER_SERVICE_BASE_URL:http://localhost:8080}
+    username: ${LEDGER_SERVICE_USERNAME:rishabh}
+    password: ${LEDGER_SERVICE_PASSWORD:password123}

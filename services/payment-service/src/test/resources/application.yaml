@@ -8,3 +8,13 @@ spring:
     hibernate:
       ddl-auto: create-drop
     show-sql: false
+
+fraud:
+  service:
+    base-url: http://localhost:8081
+
+ledger:
+  service:
+    base-url: http://localhost:8080
+    username: rishabh
+    password: password123

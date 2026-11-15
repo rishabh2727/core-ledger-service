@@ -6,20 +6,32 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.rishabh.payment_service.dto.PaymentRequest;
 import com.rishabh.payment_service.model.Payment;
 import com.rishabh.payment_service.repository.PaymentRepository;
+import com.rishabh.payment_service.service.PaymentOrchestrationService;
 
 @RestController
 @RequestMapping("/payments")
 public class PaymentController {
 
     private final PaymentRepository paymentRepository;
+    private final PaymentOrchestrationService paymentOrchestrationService;
 
-    public PaymentController(PaymentRepository paymentRepository) {
+    public PaymentController(PaymentRepository paymentRepository,
+                             PaymentOrchestrationService paymentOrchestrationService) {
         this.paymentRepository = paymentRepository;
+        this.paymentOrchestrationService = paymentOrchestrationService;
+    }
+
+    @PostMapping
+    public Payment createPayment(@RequestBody PaymentRequest request) {
+        return paymentOrchestrationService.createPayment(request);
     }
 
     @GetMapping
