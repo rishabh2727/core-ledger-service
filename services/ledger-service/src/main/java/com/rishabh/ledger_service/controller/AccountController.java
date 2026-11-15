@@ -2,6 +2,7 @@ package com.rishabh.ledger_service.controller;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -10,6 +11,9 @@ import org.springframework.web.bind.annotation.RestController;
 import com.rishabh.ledger_service.model.Account;
 import com.rishabh.ledger_service.model.LedgerEntry;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.rishabh.ledger_service.dto.DepositRequest;
 import com.rishabh.ledger_service.repository.AccountRepository;
 import com.rishabh.ledger_service.repository.LedgerEntryRepository;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -50,6 +54,23 @@ public class AccountController{
         account.setStatus("ACTIVE");
         Account saved = accountRepository.save(account);
         return ResponseEntity.ok(saved);
+    }
+
+    @PostMapping("/{id}/deposits")
+    @Transactional
+    public ResponseEntity<?> depositMoney(@PathVariable Long id, @RequestBody DepositRequest request) {
+        if (!accountRepository.existsById(id)) {
+            return ResponseEntity.notFound().build();
+        }
+
+        LedgerEntry deposit = new LedgerEntry();
+        deposit.setAccountId(id);
+        deposit.setTransactionId(ThreadLocalRandom.current().nextLong(1, Long.MAX_VALUE));
+        deposit.setType(LedgerEntry.TransactionType.CREDIT);
+        deposit.setAmount(request.getAmount());
+        ledgerEntryRepository.save(deposit);
+
+        return ResponseEntity.ok("Deposit completed for account " + id + ". Amount: " + request.getAmount());
     }
 
     // handles GET /accounts/5, GET /accounts/12

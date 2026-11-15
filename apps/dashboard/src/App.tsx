@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { motion } from 'framer-motion'
 
@@ -32,6 +32,13 @@ type TransferFormState = {
   amount: string
   idempotencyKey: string
 }
+
+type DepositFormState = {
+  accountId: string
+  amount: string
+}
+
+type ApiStatus = 'unknown' | 'online' | 'offline'
 
 const sampleTransactions: DashboardTransaction[] = [
   {
@@ -82,22 +89,174 @@ const serviceCards = [
   { name: 'Payment Service', detail: 'Coming next: payment lifecycle' },
 ]
 
+const learningCards = [
+  {
+    eyebrow: 'API basics',
+    title: 'How does “add money” work?',
+    body: 'The dashboard calls Ledger with an account id and amount. Ledger creates a CREDIT entry. Balance is not stored directly; it is calculated from ledger entries.',
+    flow: 'Dashboard -> Ledger API -> ledger_entries',
+    accent: 'from-amber-300/30 to-orange-500/10',
+  },
+  {
+    eyebrow: 'Transfer flow',
+    title: 'What happens when I send money?',
+    body: 'Ledger checks accounts, checks balance, writes DEBIT and CREDIT entries, saves an outbox event, then the outbox publisher sends the Kafka event.',
+    flow: 'Ledger DB -> Outbox -> Kafka -> Fraud',
+    accent: 'from-cyan-300/30 to-blue-500/10',
+  },
+  {
+    eyebrow: 'Kafka failure',
+    title: 'What if Kafka is down?',
+    body: 'The transfer and outbox row are still saved together. The event stays PENDING in the outbox table and the publisher retries later.',
+    flow: 'Kafka down -> event stays pending -> retry',
+    accent: 'from-rose-300/30 to-red-500/10',
+  },
+  {
+    eyebrow: 'Spam clicks',
+    title: 'What if I spam send money?',
+    body: 'The idempotency key protects Ledger from processing the same request twice. If the key is reused, Ledger returns the original transaction instead.',
+    flow: 'Same key -> duplicate blocked',
+    accent: 'from-fuchsia-300/30 to-purple-500/10',
+  },
+  {
+    eyebrow: 'Fraud rules',
+    title: 'How does Fraud decide?',
+    body: 'Fraud consumes the Kafka event, runs each rule, adds scores, saves the final decision, and exposes it through the Fraud API.',
+    flow: 'Kafka event -> rules -> score -> fraud_decisions',
+    accent: 'from-emerald-300/30 to-green-500/10',
+  },
+  {
+    eyebrow: 'Redis velocity',
+    title: 'Why is Redis here?',
+    body: 'Redis remembers recent transfers per account. If one account sends too many transfers quickly, the velocity rule adds risk points.',
+    flow: 'account id -> Redis sorted set -> recent count',
+    accent: 'from-violet-300/30 to-indigo-500/10',
+  },
+]
+
+const backendFlowSteps = [
+  {
+    title: 'Dashboard sends transfer request',
+    detail: 'The button press sends POST /transfers to Ledger through the Vite proxy with Basic Auth.',
+  },
+  {
+    title: 'Ledger validates request',
+    detail: 'Ledger checks that both accounts exist and that the sender has enough balance.',
+  },
+  {
+    title: 'Ledger saves DEBIT row',
+    detail: 'A DEBIT ledger_entries row is saved for the sender account.',
+  },
+  {
+    title: 'Ledger saves CREDIT row',
+    detail: 'A CREDIT ledger_entries row is saved for the receiver account.',
+  },
+  {
+    title: 'Ledger saves idempotency key',
+    detail: 'The idempotency key is saved so the same request is not processed twice.',
+  },
+  {
+    title: 'Ledger saves outbox event',
+    detail: 'A PENDING outbox_events row is saved in the same database transaction.',
+  },
+  {
+    title: 'Outbox publisher sends Kafka event',
+    detail: 'The background publisher reads the pending outbox row and sends transfer-events to Kafka.',
+  },
+  {
+    title: 'Kafka stores the event',
+    detail: 'Kafka becomes the handoff point between Ledger and Fraud.',
+  },
+  {
+    title: 'Fraud listener receives event',
+    detail: 'Fraud Service consumes the transfer event and starts running fraud rules.',
+  },
+  {
+    title: 'LargeAmountRule runs',
+    detail: 'If amount is greater than 1000, Fraud adds 70 risk points.',
+    points: '+70',
+  },
+  {
+    title: 'RoundAmountRule runs',
+    detail: 'If amount is a round hundred amount, Fraud adds 10 risk points.',
+    points: '+10',
+  },
+  {
+    title: 'VelocityRule checks Redis',
+    detail: 'Fraud checks Redis to count recent transfers for this account.',
+    points: '+0 or +50',
+  },
+  {
+    title: 'Fraud calculates final score',
+    detail: 'All rule scores are added together. Score >= 50 becomes DECLINE.',
+  },
+  {
+    title: 'Fraud saves decision row',
+    detail: 'Fraud saves transaction id, amount, score, outcome, and reason in fraud_decisions.',
+  },
+  {
+    title: 'Dashboard reads Fraud API',
+    detail: 'The UI polls GET /fraud-decisions and updates the live transaction feed.',
+  },
+  {
+    title: 'Payment Service decision step',
+    detail: 'Coming next: Payment Service will use the decision to mark payments approved, declined, or completed.',
+    future: true,
+  },
+]
+
 function App() {
   const [transactions, setTransactions] = useState<DashboardTransaction[]>(sampleTransactions)
   const [selectedId, setSelectedId] = useState<number>(102)
   const [animationRun, setAnimationRun] = useState(0)
+  const [flowStep, setFlowStep] = useState(-1)
+  const flowTimer = useRef<number | undefined>(undefined)
   const [form, setForm] = useState<TransferFormState>(() => ({
     fromAccountId: '1',
     toAccountId: '2',
     amount: '2000.00',
     idempotencyKey: `demo-${Date.now()}`,
   }))
+  const [depositForm, setDepositForm] = useState<DepositFormState>({
+    accountId: '1',
+    amount: '5000.00',
+  })
+  const [ledgerStatus, setLedgerStatus] = useState<ApiStatus>('unknown')
+  const [fraudStatus, setFraudStatus] = useState<ApiStatus>('unknown')
   const [statusMessage, setStatusMessage] = useState('Start your backend, then submit a transfer to watch the flow.')
 
   const selectedTransaction = useMemo(
     () => transactions.find((transaction) => transaction.transactionId === selectedId) ?? transactions[0],
     [transactions, selectedId],
   )
+
+  useEffect(() => {
+    return () => {
+      if (flowTimer.current) {
+        window.clearInterval(flowTimer.current)
+      }
+    }
+  }, [])
+
+  function playBackendTimeline() {
+    if (flowTimer.current) {
+      window.clearInterval(flowTimer.current)
+    }
+
+    setFlowStep(0)
+    flowTimer.current = window.setInterval(() => {
+      setFlowStep((current) => {
+        if (current >= backendFlowSteps.length - 1) {
+          if (flowTimer.current) {
+            window.clearInterval(flowTimer.current)
+          }
+          return current
+        }
+
+        return current + 1
+      })
+    }, 750)
+  }
 
   async function refreshFraudDecisions() {
     const response = await fetch('/api/fraud/fraud-decisions?size=20')
@@ -107,19 +266,29 @@ function App() {
 
     const page = (await response.json()) as FraudDecisionPage
     const backendTransactions = (page.content ?? []).map(toDashboardTransaction)
+    setFraudStatus('online')
 
     if (backendTransactions.length > 0) {
-      setTransactions([...backendTransactions, ...sampleTransactions])
+      setTransactions((current) => {
+        const decidedTransactionIds = new Set(backendTransactions.map((transaction) => transaction.transactionId))
+        const stillPending = current.filter(
+          (transaction) => transaction.source === 'backend'
+            && transaction.status === 'PENDING'
+            && !decidedTransactionIds.has(transaction.transactionId),
+        )
+
+        return [...stillPending, ...backendTransactions]
+      })
     }
   }
 
   useEffect(() => {
     const firstPoll = window.setTimeout(() => {
-      refreshFraudDecisions().catch(() => undefined)
+      refreshFraudDecisions().catch(() => setFraudStatus('offline'))
     }, 0)
 
     const timer = window.setInterval(() => {
-      refreshFraudDecisions().catch(() => undefined)
+      refreshFraudDecisions().catch(() => setFraudStatus('offline'))
     }, 4000)
 
     return () => {
@@ -131,6 +300,7 @@ function App() {
   async function submitTransfer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setAnimationRun((current) => current + 1)
+    playBackendTimeline()
     setStatusMessage('Transfer submitted. Watch the event move through the system.')
 
     try {
@@ -154,6 +324,7 @@ function App() {
         throw new Error(message)
       }
 
+      setLedgerStatus('online')
       const transactionId = parseTransactionId(message)
       if (transactionId) {
         setSelectedId(transactionId)
@@ -178,32 +349,69 @@ function App() {
         refreshFraudDecisions().catch(() => undefined)
       }, 2500)
     } catch (error) {
+      setLedgerStatus('offline')
       setStatusMessage(error instanceof Error ? error.message : 'Could not submit transfer.')
     }
   }
 
+  async function submitDeposit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setStatusMessage('Adding money to the account through Ledger Service.')
+
+    try {
+      const response = await fetch(`/api/ledger/accounts/${depositForm.accountId}/deposits`, {
+        method: 'POST',
+        headers: {
+          Authorization: basicAuthHeader(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: depositForm.amount,
+        }),
+      })
+
+      const message = await response.text()
+      if (!response.ok) {
+        throw new Error(message || 'Could not add money to account.')
+      }
+
+      setLedgerStatus('online')
+      setStatusMessage(message)
+    } catch (error) {
+      setLedgerStatus('offline')
+      setStatusMessage(error instanceof Error ? error.message : 'Could not add money to account.')
+    }
+  }
+
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(217,70,239,0.18),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(251,191,36,0.12),_transparent_25%),#020617] text-slate-100">
       <section className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-8">
-        <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <header className="flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-white/[0.03] p-6 shadow-2xl shadow-fuchsia-950/20 backdrop-blur lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
+            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-amber-200">
               Educational Fintech Dashboard
             </p>
             <h1 className="mt-3 text-4xl font-bold tracking-tight text-white lg:text-6xl">
-              Watch one transfer move through your backend.
+              Watch money move through your backend.
             </h1>
             <p className="mt-4 max-w-3xl text-base text-slate-300">
               Submit a transfer, follow the animated event path, then click a transaction to understand the fraud score.
             </p>
           </div>
-          <ServiceStatusCard />
+          <ServiceStatusCard ledgerStatus={ledgerStatus} fraudStatus={fraudStatus} />
         </header>
+
+        <LearningFlashcards />
 
         <div className="grid gap-6 xl:grid-cols-[1.5fr_0.9fr]">
           <SystemMap animationRun={animationRun} />
-          <TransferForm form={form} onChange={setForm} onSubmit={submitTransfer} statusMessage={statusMessage} />
+          <div className="space-y-6">
+            <DepositForm form={depositForm} onChange={setDepositForm} onSubmit={submitDeposit} />
+            <TransferForm form={form} onChange={setForm} onSubmit={submitTransfer} statusMessage={statusMessage} />
+          </div>
         </div>
+
+        <BackendProgressTimeline currentStep={flowStep} />
 
         <div className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
           <TransactionFeed
@@ -218,47 +426,199 @@ function App() {
   )
 }
 
-function SystemMap({ animationRun }: { animationRun: number }) {
+function LearningFlashcards() {
   return (
-    <section className="rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl shadow-cyan-950/30">
+    <section className="rounded-[2rem] border border-white/10 bg-slate-900/60 p-6 shadow-2xl shadow-amber-950/10 backdrop-blur">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.3em] text-fuchsia-200">Learning flashcards</p>
+          <h2 className="mt-2 text-3xl font-bold text-white">Tap into the system design behind each click.</h2>
+        </div>
+        <p className="max-w-xl text-sm text-slate-300">
+          These cards explain the backend behavior in interview-friendly language while you interact with the app.
+        </p>
+      </div>
+
+      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {learningCards.map((card, index) => (
+          <motion.article
+            key={card.title}
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.08 }}
+            whileHover={{ y: -8, rotateX: 2, rotateY: -2 }}
+            className={`group relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br ${card.accent} p-5 shadow-xl shadow-slate-950/30`}
+          >
+            <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-white/10 blur-2xl transition group-hover:bg-white/20" />
+            <p className="text-xs font-bold uppercase tracking-[0.25em] text-white/70">{card.eyebrow}</p>
+            <h3 className="mt-3 text-xl font-bold text-white">{card.title}</h3>
+            <p className="mt-3 text-sm leading-6 text-slate-100/85">{card.body}</p>
+            <div className="mt-5 rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm font-semibold text-cyan-100">
+              {card.flow}
+            </div>
+          </motion.article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function BackendProgressTimeline({ currentStep }: { currentStep: number }) {
+  return (
+    <section className="rounded-[2rem] border border-white/10 bg-slate-900/70 p-6 shadow-2xl shadow-cyan-950/20 backdrop-blur">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-200">Backend progress</p>
+          <h2 className="mt-2 text-3xl font-bold text-white">What one button press does behind the scenes</h2>
+        </div>
+        <p className="max-w-xl text-sm text-slate-300">
+          Press “Submit transfer” to watch each backend step turn active, complete, and move to the next service.
+        </p>
+      </div>
+
+      <div className="mt-6 grid gap-3 lg:grid-cols-2">
+        {backendFlowSteps.map((step, index) => {
+          const isComplete = currentStep > index
+          const isActive = currentStep === index
+          const isWaiting = currentStep < index
+
+          return (
+            <motion.div
+              key={step.title}
+              animate={{
+                scale: isActive ? 1.02 : 1,
+                borderColor: isActive ? 'rgba(251, 191, 36, 0.8)' : 'rgba(51, 65, 85, 1)',
+              }}
+              className={`relative overflow-hidden rounded-3xl border bg-slate-950/70 p-4 transition ${
+                isActive ? 'shadow-2xl shadow-amber-500/20' : ''
+              } ${step.future ? 'opacity-80' : ''}`}
+            >
+              {isActive && (
+                <motion.div
+                  className="absolute inset-0 bg-gradient-to-r from-amber-300/10 via-cyan-300/10 to-fuchsia-300/10"
+                  initial={{ x: '-100%' }}
+                  animate={{ x: '100%' }}
+                  transition={{ duration: 1.2, repeat: Infinity }}
+                />
+              )}
+
+              <div className="relative flex gap-4">
+                <div
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-sm font-black ${
+                    isComplete
+                      ? 'border-emerald-300 bg-emerald-300 text-slate-950'
+                      : isActive
+                        ? 'border-amber-200 bg-amber-200 text-slate-950'
+                        : 'border-slate-700 bg-slate-900 text-slate-500'
+                  }`}
+                >
+                  {isComplete ? '✓' : index + 1}
+                </div>
+
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className={`font-bold ${isWaiting ? 'text-slate-400' : 'text-white'}`}>{step.title}</h3>
+                    {step.points && (
+                      <motion.span
+                        animate={isActive ? { scale: [1, 1.25, 1], rotate: [0, -3, 3, 0] } : {}}
+                        transition={{ duration: 0.8, repeat: isActive ? Infinity : 0 }}
+                        className="rounded-full bg-fuchsia-300 px-3 py-1 text-xs font-black text-slate-950 shadow-lg shadow-fuchsia-500/30"
+                      >
+                        {step.points} pts
+                      </motion.span>
+                    )}
+                    {step.future && (
+                      <span className="rounded-full bg-slate-800 px-3 py-1 text-xs font-bold text-slate-300">
+                        coming next
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">{step.detail}</p>
+                </div>
+              </div>
+            </motion.div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function SystemMap({ animationRun }: { animationRun: number }) {
+  const eventTrail = [0, 0.35, 0.7]
+
+  return (
+    <section className="rounded-3xl border border-fuchsia-400/20 bg-slate-900/80 p-6 shadow-2xl shadow-fuchsia-950/30">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-semibold text-white">System map</h2>
           <p className="mt-1 text-sm text-slate-400">The glowing dot shows where the transfer event is travelling.</p>
         </div>
-        <span className="rounded-full bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-200">
+        <span className="rounded-full bg-amber-300/10 px-3 py-1 text-xs font-semibold text-amber-200">
           Ledger → Kafka → Fraud → Redis/DB
         </span>
       </div>
 
-      <div className="relative mt-8 min-h-[420px] overflow-hidden rounded-2xl border border-slate-800 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.18),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(168,85,247,0.18),_transparent_28%)] p-5">
-        <div className="absolute left-8 right-8 top-1/2 h-px bg-gradient-to-r from-cyan-400/20 via-cyan-300/70 to-purple-400/20" />
-        <motion.div
-          key={animationRun}
-          className="absolute z-20 h-5 w-5 rounded-full bg-cyan-300 shadow-[0_0_35px_rgba(103,232,249,0.95)]"
-          initial={{ left: '4%', top: '48%', opacity: 0 }}
-          animate={{
-            left: ['4%', '25%', '47%', '67%', '86%'],
-            top: ['48%', '48%', '48%', '31%', '63%'],
-            opacity: [0, 1, 1, 1, 0],
-          }}
-          transition={{ duration: 3.4, ease: 'easeInOut' }}
-        />
+      <div className="relative mt-8 min-h-[420px] overflow-hidden rounded-2xl border border-slate-800 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.20),_transparent_30%),radial-gradient(circle_at_center,_rgba(251,191,36,0.10),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(217,70,239,0.22),_transparent_30%)] p-5">
+        <div className="absolute left-8 right-8 top-1/2 h-px bg-gradient-to-r from-cyan-400/20 via-amber-300/80 to-fuchsia-400/25" />
+        {eventTrail.map((delay) => (
+          <motion.div
+            key={`${animationRun}-${delay}`}
+            className="absolute z-20 h-5 w-5 rounded-full bg-amber-200 shadow-[0_0_35px_rgba(251,191,36,0.95)]"
+            initial={{ left: '4%', top: '48%', opacity: 0, scale: 0.7 }}
+            animate={{
+              left: ['4%', '25%', '47%', '67%', '86%'],
+              top: ['48%', '48%', '48%', '31%', '63%'],
+              opacity: [0, 1, 1, 1, 0],
+              scale: [0.7, 1.2, 1, 1.35, 0.5],
+            }}
+            transition={{ duration: 3.4, delay, ease: 'easeInOut' }}
+          />
+        ))}
 
         <div className="grid h-full gap-4 md:grid-cols-3">
           {serviceCards.map((service, index) => (
-            <div
+            <motion.div
               key={service.name}
-              className={`rounded-2xl border border-slate-700 bg-slate-950/70 p-4 backdrop-blur ${
+              whileHover={{ y: -4, scale: 1.02 }}
+              className={`rounded-2xl border border-slate-700 bg-slate-950/75 p-4 shadow-lg shadow-slate-950/30 backdrop-blur ${
                 index === 3 ? 'md:col-start-2' : ''
               } ${index === 4 ? 'md:col-start-3' : ''}`}
             >
               <p className="text-sm font-semibold text-cyan-200">{service.name}</p>
               <p className="mt-2 text-sm text-slate-400">{service.detail}</p>
-            </div>
+            </motion.div>
           ))}
         </div>
       </div>
+    </section>
+  )
+}
+
+function DepositForm({
+  form,
+  onChange,
+  onSubmit,
+}: {
+  form: DepositFormState
+  onChange: (form: DepositFormState) => void
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+}) {
+  return (
+    <section className="rounded-3xl border border-amber-300/20 bg-gradient-to-br from-amber-400/15 via-slate-900 to-fuchsia-500/10 p-6 shadow-2xl shadow-amber-950/20">
+      <p className="text-sm font-semibold uppercase tracking-[0.25em] text-amber-200">Fund an account</p>
+      <h2 className="mt-2 text-2xl font-semibold text-white">Add money before testing transfers</h2>
+      <p className="mt-2 text-sm text-slate-300">
+        This calls Ledger and creates a CREDIT entry, so the account has balance available.
+      </p>
+
+      <form className="mt-6 space-y-4" onSubmit={onSubmit}>
+        <Input label="Account id" value={form.accountId} onChange={(value) => onChange({ ...form, accountId: value })} />
+        <Input label="Amount to add" value={form.amount} onChange={(value) => onChange({ ...form, amount: value })} />
+        <button className="w-full rounded-2xl bg-amber-300 px-4 py-3 font-semibold text-slate-950 shadow-lg shadow-amber-500/20 transition hover:bg-amber-200">
+          Add money to account
+        </button>
+      </form>
     </section>
   )
 }
@@ -338,6 +698,7 @@ function TransactionFeed({
               <th className="px-4 py-3">Transaction</th>
               <th className="px-4 py-3">Amount</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Source</th>
             </tr>
           </thead>
           <tbody>
@@ -353,6 +714,11 @@ function TransactionFeed({
                 <td className="px-4 py-3 text-slate-300">${formatAmount(transaction.amount)}</td>
                 <td className="px-4 py-3">
                   <StatusBadge status={transaction.status} />
+                </td>
+                <td className="px-4 py-3">
+                  <span className="rounded-full bg-slate-800 px-2 py-1 text-xs uppercase text-slate-300">
+                    {transaction.source}
+                  </span>
                 </td>
               </tr>
             ))}
@@ -403,13 +769,33 @@ function FraudExplanationPanel({ transaction }: { transaction: DashboardTransact
   )
 }
 
-function ServiceStatusCard() {
+function ServiceStatusCard({
+  ledgerStatus,
+  fraudStatus,
+}: {
+  ledgerStatus: ApiStatus
+  fraudStatus: ApiStatus
+}) {
   return (
     <div className="rounded-3xl border border-slate-800 bg-slate-900 px-5 py-4">
-      <p className="text-sm font-semibold text-white">Learning mode</p>
-      <p className="mt-1 text-sm text-slate-400">Animated UI + real API calls when services are running.</p>
+      <p className="text-sm font-semibold text-white">Backend API status</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <ApiStatusBadge label="Ledger" status={ledgerStatus} />
+        <ApiStatusBadge label="Fraud" status={fraudStatus} />
+      </div>
+      <p className="mt-3 text-sm text-slate-400">The UI uses sample rows only until backend data is available.</p>
     </div>
   )
+}
+
+function ApiStatusBadge({ label, status }: { label: string; status: ApiStatus }) {
+  const styles = {
+    unknown: 'bg-slate-700 text-slate-200',
+    online: 'bg-emerald-400/10 text-emerald-300',
+    offline: 'bg-rose-400/10 text-rose-300',
+  }
+
+  return <span className={`rounded-full px-3 py-1 text-xs font-bold ${styles[status]}`}>{label}: {status}</span>
 }
 
 function StatusBadge({ status }: { status: DashboardTransaction['status'] }) {
